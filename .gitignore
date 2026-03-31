@@ -1,0 +1,21 @@
+# Rust
+/target/
+
+# Node
+node_modules/
+dist-js/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tauri
+/gen/
