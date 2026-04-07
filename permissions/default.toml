@@ -1,0 +1,3 @@
+[default]
+description = "Allows querying the current network connection status."
+permissions = ["allow-connection-status"]
