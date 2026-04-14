@@ -180,11 +180,19 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 
 #### Platform mapping
 
+<<<<<<< Updated upstream
 | Field         | Windows                                   | iOS                       | Android                          |
 | ------------- | ----------------------------------------- | ------------------------- | -------------------------------- |
 | `metered`     | `NetworkCostType` Fixed/Variable          | `NWPath.isExpensive`      | absence of `NOT_METERED`         |
 | `constrained` | `ApproachingDataLimit`, `OverDataLimit`, `Roaming` | `NWPath.isConstrained`    | Data Saver / `RESTRICT_BACKGROUND` |
 | `connectionType` | WWAN/WLAN/IANA interface type          | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities       |
+=======
+| Field            | Windows                                                                             | iOS                         | Android                            |
+| ---------------- | ----------------------------------------------------------------------------------- | --------------------------- | ---------------------------------- |
+| `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
+| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | `NWPath.isConstrained`      | Data Saver / `RESTRICT_BACKGROUND` |
+| `connectionType` | WWAN/WLAN/IANA interface type                                                       | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities         |
+>>>>>>> Stashed changes
 
 ## Development Standards
 

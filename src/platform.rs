@@ -1,17 +1,9 @@
-use crate::error::{Error, Result};
-use crate::types::ConnectionStatus;
+#[cfg(not(target_os = "windows"))]
+mod unsupported;
+#[cfg(target_os = "windows")]
+mod windows;
 
-/// Returns [`Error::Unsupported`] until a platform-specific implementation is added.
-pub fn connection_status() -> Result<ConnectionStatus> {
-   Err(Error::Unsupported)
-}
-
-#[cfg(test)]
-mod tests {
-   use super::*;
-
-   #[test]
-   fn returns_unsupported() {
-      assert!(matches!(connection_status(), Err(Error::Unsupported)));
-   }
-}
+#[cfg(not(target_os = "windows"))]
+pub use unsupported::connection_status;
+#[cfg(target_os = "windows")]
+pub use windows::connection_status;
