@@ -43,12 +43,8 @@ pub struct ConnectionStatus {
    /// roaming, or background data usage is restricted.
    ///
    /// Platform mapping:
-<<<<<<< Updated upstream
-   /// - **Windows:** `ApproachingDataLimit`, `OverDataLimit`, or `Roaming`
-=======
    /// - **Windows:** `ConstrainedInternetAccess`, `ApproachingDataLimit`,
    ///   `OverDataLimit`, `Roaming`, or `BackgroundDataUsageRestricted`
->>>>>>> Stashed changes
    /// - **iOS:** `NWPath.isConstrained` (Low Data Mode)
    /// - **Android:** Data Saver / `RESTRICT_BACKGROUND_STATUS`
    pub constrained: bool,

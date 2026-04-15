@@ -116,13 +116,15 @@ fn is_metered(cost_type: NetworkCostType) -> bool {
 }
 
 /// Windows exposes several cost-related flags. We treat approaching/over-limit
-/// and roaming as constrained because callers use this field for conservative
-/// network policy decisions. The relevant flags all come from
+/// roaming, and background data restrictions as constrained because callers use
+/// this field for conservative network policy decisions. The relevant flags all
+/// come from
 /// [`ConnectionCost`](https://learn.microsoft.com/en-us/uwp/api/windows.networking.connectivity.connectioncost?view=winrt-28000).
 fn is_constrained_cost(connection_cost: &ConnectionCost) -> Result<bool> {
    Ok(connection_cost.ApproachingDataLimit()?
       || connection_cost.OverDataLimit()?
-      || connection_cost.Roaming()?)
+      || connection_cost.Roaming()?
+      || connection_cost.BackgroundDataUsageRestricted()?)
 }
 
 /// Windows reports captive portal and similar limited-internet cases through
