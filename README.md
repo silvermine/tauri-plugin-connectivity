@@ -21,7 +21,7 @@ decisions.
 
 | Platform | Supported |
 | -------- | --------- |
-| Windows  | Planned   |
+| Windows  | Yes       |
 | macOS    | Planned   |
 | Android  | Planned   |
 | iOS      | Planned   |
