@@ -1,3 +1,4 @@
+use tracing::{debug, warn};
 use windows::Networking::Connectivity::{
    ConnectionCost, ConnectionProfile, NetworkConnectivityLevel, NetworkCostType, NetworkInformation,
 };
@@ -22,19 +23,20 @@ const IANA_WWANPP2: u32 = 244;
 /// transport information from the resulting
 /// [`ConnectionProfile`](https://learn.microsoft.com/en-us/uwp/api/windows.networking.connectivity.connectionprofile?view=winrt-28000).
 pub fn connection_status() -> Result<ConnectionStatus> {
+   debug!("querying Windows internet connection profile");
+
    let profile = match NetworkInformation::GetInternetConnectionProfile() {
       Ok(profile) => profile,
       Err(error) if is_missing_profile_error(&error) => {
+         debug!("Windows did not return an internet connection profile");
          return Ok(ConnectionStatus::disconnected());
       }
       Err(error) => {
+         warn!(%error, "failed to query Windows internet connection profile");
          return Err(error.into());
       }
    };
 
-<<<<<<< Updated upstream
-   if !has_internet_access(profile.GetNetworkConnectivityLevel()?) {
-=======
    let connectivity_level = profile
       .GetNetworkConnectivityLevel()
       .inspect_err(|error| warn!(%error, "failed to query Windows connectivity level"))?;
@@ -49,15 +51,13 @@ pub fn connection_status() -> Result<ConnectionStatus> {
          connectivity_level = ?connectivity_level,
          "connectivity level does not indicate internet or constrained access"
       );
->>>>>>> Stashed changes
       return Ok(ConnectionStatus::disconnected());
    }
 
-   let connection_cost = profile.GetConnectionCost()?;
+   let connection_cost = profile
+      .GetConnectionCost()
+      .inspect_err(|error| warn!(%error, "failed to query Windows connection cost"))?;
 
-<<<<<<< Updated upstream
-   Ok(ConnectionStatus {
-=======
    let cost_type = connection_cost
       .NetworkCostType()
       .inspect_err(|error| warn!(%error, "failed to query Windows network cost type"))?;
@@ -71,12 +71,21 @@ pub fn connection_status() -> Result<ConnectionStatus> {
       .inspect_err(|error| warn!(%error, "failed to resolve Windows connection type"))?;
 
    let status = ConnectionStatus {
->>>>>>> Stashed changes
       connected: true,
-      metered: is_metered(connection_cost.NetworkCostType()?),
-      constrained: is_constrained(&connection_cost)?,
-      connection_type: connection_type(&profile)?,
-   })
+      metered: is_metered(cost_type),
+      constrained,
+      connection_type,
+   };
+
+   debug!(
+      ?cost_type,
+      constrained = status.constrained,
+      connection_type = ?status.connection_type,
+      metered = status.metered,
+      "resolved Windows connection status"
+   );
+
+   Ok(status)
 }
 
 /// The WinRT binding can return a success-coded error when the API succeeds but
@@ -141,16 +150,23 @@ fn is_constrained_connectivity(connectivity_level: NetworkConnectivityLevel) -> 
 /// do not classify the transport.
 fn resolve_connection_type(profile: &ConnectionProfile) -> Result<ConnectionType> {
    if profile.IsWlanConnectionProfile()? {
+      debug!("Windows classified the preferred profile as WLAN");
       return Ok(ConnectionType::Wifi);
    }
 
    if profile.IsWwanConnectionProfile()? {
+      debug!("Windows classified the preferred profile as WWAN");
       return Ok(ConnectionType::Cellular);
    }
 
-   Ok(map_iana_interface_type(
-      profile.NetworkAdapter()?.IanaInterfaceType()?,
-   ))
+   let iana_interface_type = profile.NetworkAdapter()?.IanaInterfaceType()?;
+
+   debug!(
+      iana_interface_type,
+      "falling back to IANA interface type for connection classification"
+   );
+
+   Ok(map_iana_interface_type(iana_interface_type))
 }
 
 /// Maps the adapter's IANA interface type to a plugin-level transport.
@@ -209,25 +225,11 @@ mod tests {
       assert!(is_metered(NetworkCostType::Variable));
    }
 
-<<<<<<< Updated upstream
-    #[test]
-    fn treats_empty_windows_error_as_missing_profile() {
-       assert!(is_missing_profile_error(&Error::empty()));
-    }
-
-<<<<<<< Updated upstream
-    #[test]
-    fn does_not_treat_failure_hresult_as_missing_profile() {
-       assert!(!is_missing_profile_error(&Error::from_hresult(HRESULT(-1))));
-    }
-=======
-=======
    #[test]
    fn treats_empty_windows_error_as_missing_profile() {
       assert!(is_missing_profile_error(&Error::empty()));
    }
 
->>>>>>> Stashed changes
    #[test]
    fn does_not_treat_success_false_hresult_as_missing_profile() {
       assert!(!is_missing_profile_error(&Error::from_hresult(HRESULT(1))));
@@ -237,7 +239,6 @@ mod tests {
    fn does_not_treat_failure_hresult_as_missing_profile() {
       assert!(!is_missing_profile_error(&Error::from_hresult(HRESULT(-1))));
    }
->>>>>>> Stashed changes
 
    #[test]
    fn maps_ethernet_interface_type() {

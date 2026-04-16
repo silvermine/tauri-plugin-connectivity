@@ -1,4 +1,5 @@
 use tauri::{AppHandle, Runtime, command};
+use tracing::{debug, warn};
 
 use crate::error::Result;
 use crate::types::ConnectionStatus;
