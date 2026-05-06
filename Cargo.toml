@@ -15,5 +15,8 @@ tauri = { version = "2.9.3" }
 thiserror = "2.0.17"
 tracing = { version = "0.1.41", default-features = false, features = ["std", "log", "release_max_level_warn"] }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Networking_Connectivity"] }
+
 [build-dependencies]
 tauri-plugin = { version = "2.5.1", features = ["build"] }

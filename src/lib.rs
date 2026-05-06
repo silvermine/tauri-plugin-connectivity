@@ -7,6 +7,7 @@ pub use error::{Error, Result};
 pub use types::{ConnectionStatus, ConnectionType};
 
 use tauri::{Manager, Runtime, plugin::TauriPlugin};
+use tracing::debug;
 
 /// Provides connectivity detection for the current platform.
 ///
@@ -17,6 +18,7 @@ pub struct Connectivity;
 impl Connectivity {
    /// Returns the current network connection status.
    pub fn connection_status(&self) -> Result<ConnectionStatus> {
+      debug!("querying connectivity status from plugin state");
       platform::connection_status()
    }
 }
@@ -47,6 +49,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
    tauri::plugin::Builder::new("connectivity")
       .invoke_handler(tauri::generate_handler![commands::connection_status])
       .setup(|app, _api| {
+         debug!("registering connectivity plugin state");
          app.manage(Connectivity);
          Ok(())
       })

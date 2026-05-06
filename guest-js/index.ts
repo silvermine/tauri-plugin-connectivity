@@ -24,7 +24,7 @@ export interface ConnectionStatus {
     * hotspots).
     *
     * Platform mapping:
-    * - **Windows:** `NetworkCostType` is `Fixed` or `Variable`
+    * - **Windows:** `NetworkCostType` is `Unknown`, `Fixed`, or `Variable`
     * - **iOS:** `NWPath.isExpensive`
     * - **Android:** absence of `NET_CAPABILITY_NOT_METERED`
     */
@@ -35,7 +35,8 @@ export interface ConnectionStatus {
     * roaming, or background data usage is restricted.
     *
     * Platform mapping:
-    * - **Windows:** `ApproachingDataLimit`, `OverDataLimit`, or `Roaming`
+    * - **Windows:** `ConstrainedInternetAccess`, `ApproachingDataLimit`,
+    *   `OverDataLimit`, `Roaming`, or `BackgroundDataUsageRestricted`
     * - **iOS:** `NWPath.isConstrained` (Low Data Mode)
     * - **Android:** Data Saver / `RESTRICT_BACKGROUND_STATUS`
     */
@@ -52,8 +53,11 @@ export interface ConnectionStatus {
  * Returns the current network connection status.
  *
  * @returns A promise that resolves with the current {@link ConnectionStatus}.
- * @throws On platforms without an implementation, rejects with an `Unsupported`
- * error.
+ * @throws Rejects with a string error when the platform is unsupported or when
+ * native status detection fails. Unsupported platforms use the message
+ * `connection status detection is not supported on this platform`; backend
+ * failures use `connection status detection failed: ...` or
+ * `connection status detection failed with native error code <code>: ...`.
  */
 export async function connectionStatus(): Promise<ConnectionStatus> {
    return invoke<ConnectionStatus>('plugin:connectivity|connection_status');

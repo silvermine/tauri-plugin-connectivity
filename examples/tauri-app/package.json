@@ -1,0 +1,22 @@
+{
+   "name": "tauri-app",
+   "private": true,
+   "version": "0.1.0",
+   "type": "module",
+   "scripts": {
+      "vite": "vite",
+      "build": "tsc --noEmit && vite build",
+      "preview": "vite preview",
+      "tauri": "tauri",
+      "dev": "tauri dev"
+   },
+   "dependencies": {
+      "@silvermine/tauri-plugin-connectivity": "file:../../",
+      "@tauri-apps/api": "^2.9.1"
+   },
+   "devDependencies": {
+      "@tauri-apps/cli": "^2.9.5",
+      "typescript": "^5.8.3",
+      "vite": "^6.3.5"
+   }
+}

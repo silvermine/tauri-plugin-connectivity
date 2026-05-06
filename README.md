@@ -21,7 +21,7 @@ decisions.
 
 | Platform | Supported |
 | -------- | --------- |
-| Windows  | Planned   |
+| Windows  | Yes       |
 | macOS    | Planned   |
 | Android  | Planned   |
 | iOS      | Planned   |
@@ -171,20 +171,20 @@ fn check_connection<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 The `connectionStatus()` function returns a `ConnectionStatus` object:
 
-| Field            | Type             | Description                                                      |
-| ---------------- | ---------------- | ---------------------------------------------------------------- |
-| `connected`      | `boolean`        | Whether the device has an active internet connection             |
-| `metered`        | `boolean`        | Whether data usage is billed or limited                          |
-| `constrained`    | `boolean`        | Whether the connection is data-constrained or restricted         |
-| `connectionType` | `ConnectionType` | The physical transport: `wifi`, `ethernet`, `cellular`, `unknown`|
+| Field            | Type             | Description                                                       |
+| ---------------- | ---------------- | ----------------------------------------------------------------- |
+| `connected`      | `boolean`        | Whether the device has an active internet connection              |
+| `metered`        | `boolean`        | Whether data usage is billed or limited                           |
+| `constrained`    | `boolean`        | Whether the connection is data-constrained or restricted          |
+| `connectionType` | `ConnectionType` | The physical transport: `wifi`, `ethernet`, `cellular`, `unknown` |
 
 #### Platform mapping
 
-| Field         | Windows                                   | iOS                       | Android                          |
-| ------------- | ----------------------------------------- | ------------------------- | -------------------------------- |
-| `metered`     | `NetworkCostType` Fixed/Variable          | `NWPath.isExpensive`      | absence of `NOT_METERED`         |
-| `constrained` | `ApproachingDataLimit`, `OverDataLimit`, `Roaming` | `NWPath.isConstrained`    | Data Saver / `RESTRICT_BACKGROUND` |
-| `connectionType` | WWAN/WLAN/IANA interface type          | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities       |
+| Field            | Windows                                                                             | iOS                         | Android                            |
+| ---------------- | ----------------------------------------------------------------------------------- | --------------------------- | ---------------------------------- |
+| `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
+| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | `NWPath.isConstrained`      | Data Saver / `RESTRICT_BACKGROUND` |
+| `connectionType` | WWAN/WLAN/IANA interface type                                                       | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities         |
 
 ## Development Standards
 
