@@ -69,6 +69,12 @@ Run Rust tests only:
 cargo test --workspace --lib
 ```
 
+### Manual Linux scenario testing
+
+See [Linux Connectivity Manual Testing](docs/linux-connectivity-manual-testing.md)
+for WSL2, VirtualBox, NetworkManager, ModemManager, metered, constrained, and
+transport-type test scenarios.
+
 ## Install
 
 _This plugin requires a Rust version of at least **1.89**_
