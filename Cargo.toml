@@ -18,5 +18,8 @@ tracing = { version = "0.1.41", default-features = false, features = ["std", "lo
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = ["Networking_Connectivity"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "=5.14.0"
+
 [build-dependencies]
 tauri-plugin = { version = "2.5.1", features = ["build"] }
