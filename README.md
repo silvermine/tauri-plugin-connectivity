@@ -69,6 +69,12 @@ Run Rust tests only:
 cargo test --workspace --lib
 ```
 
+### Manual Linux scenario testing
+
+See [Linux Connectivity Manual Testing](docs/linux-connectivity-manual-testing.md)
+for WSL2, VirtualBox, NetworkManager, ModemManager, metered, constrained, and
+transport-type test scenarios.
+
 ## Install
 
 _This plugin requires a Rust version of at least **1.94.0**_
@@ -183,9 +189,9 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 
 | Field            | Windows                                                                             | Linux                                             | iOS                         | Android                            |
 | ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------- | ---------------------------------- |
-| `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL` or up default route fallback | `NWPath.status` satisfied   | active network with internet capability |
+| `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL`/`LIMITED` or up IPv4/IPv6 default route fallback | `NWPath.status` satisfied   | active network with internet capability |
 | `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | NetworkManager primary device `Metered`           | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
-| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/metered or cellular roaming; fallback defaults to `false` | `NWPath.isConstrained`      | Data Saver / `RESTRICT_BACKGROUND` |
+| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; fallback defaults to `false` | `NWPath.isConstrained`      | Data Saver / `RESTRICT_BACKGROUND` |
 | `connectionType` | WWAN/WLAN/IANA interface type                                                       | NetworkManager device type or sysfs fallback      | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities         |
 
 ## Development Standards
