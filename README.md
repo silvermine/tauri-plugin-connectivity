@@ -17,12 +17,12 @@ decisions.
    * Detect connection type (WiFi, Ethernet, Cellular)
    * Query metered and constrained status for network policy decisions
    * Check internet reachability
-   * Cross-platform support (Windows, iOS, Android)
+   * Cross-platform support (Windows, macOS, iOS, Android)
 
 | Platform | Supported |
 | -------- | --------- |
 | Windows  | Yes       |
-| macOS    | Planned   |
+| macOS    | Yes       |
 | Android  | Planned   |
 | iOS      | Planned   |
 
@@ -180,11 +180,12 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 
 #### Platform mapping
 
-| Field            | Windows                                                                             | iOS                         | Android                            |
-| ---------------- | ----------------------------------------------------------------------------------- | --------------------------- | ---------------------------------- |
-| `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
-| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | `NWPath.isConstrained`      | Data Saver / `RESTRICT_BACKGROUND` |
-| `connectionType` | WWAN/WLAN/IANA interface type                                                       | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities         |
+| Field            | Windows                                                                             | macOS                                          | iOS                         | Android                            |
+| ---------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------- | --------------------------- | ---------------------------------- |
+| `connected`      | internet or constrained internet access                                             | `nw_path_get_status == satisfied`              | `NWPath.status == satisfied`| validated internet capabilities    |
+| `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | `nw_path_is_expensive`                         | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
+| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | `nw_path_is_constrained`                       | `NWPath.isConstrained`      | Data Saver / `RESTRICT_BACKGROUND` |
+| `connectionType` | WWAN/WLAN/IANA interface type                                                       | `nw_path_uses_interface_type`                  | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities         |
 
 ## Development Standards
 
