@@ -1,14 +1,12 @@
 use std::ffi::c_void;
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::Duration;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use block2::{Block, RcBlock};
-use dispatch2::DispatchQueue;
+use dispatch2::{DispatchQueue, DispatchRetained};
 
 use crate::error::{Error, Result};
 use crate::types::{ConnectionStatus, ConnectionType};
 
-const MONITOR_TIMEOUT: Duration = Duration::from_secs(1);
 const NW_PATH_STATUS_SATISFIED: i32 = 1;
 const NW_INTERFACE_TYPE_WIFI: i32 = 1;
 const NW_INTERFACE_TYPE_CELLULAR: i32 = 2;
@@ -26,27 +24,49 @@ unsafe extern "C" {
       update_handler: &Block<dyn Fn(NwPath)>,
    );
    fn nw_path_monitor_start(monitor: NwPathMonitor);
-   fn nw_path_monitor_cancel(monitor: NwPathMonitor);
    fn nw_path_get_status(path: NwPath) -> i32;
    fn nw_path_is_expensive(path: NwPath) -> bool;
    fn nw_path_is_constrained(path: NwPath) -> bool;
    fn nw_path_uses_interface_type(path: NwPath, interface_type: i32) -> bool;
-   fn nw_release(object: *mut c_void);
 }
 
+static MONITOR: OnceLock<Option<MacosConnectivityMonitor>> = OnceLock::new();
+
+struct MacosConnectivityMonitor {
+   _monitor: NwPathMonitor,
+   _queue: DispatchRetained<DispatchQueue>,
+   _handler: RcBlock<dyn Fn(NwPath)>,
+   status: Arc<RwLock<Option<ConnectionStatus>>>,
+}
+
+unsafe impl Send for MacosConnectivityMonitor {}
+unsafe impl Sync for MacosConnectivityMonitor {}
+
 pub fn connection_status() -> Result<ConnectionStatus> {
-   let monitor = unsafe { nw_path_monitor_create() };
-   if monitor.is_null() {
-      return Err(Error::DetectionFailed {
+   let monitor = MONITOR.get_or_init(create_monitor);
+
+   monitor
+      .as_ref()
+      .map(MacosConnectivityMonitor::current_status)
+      .ok_or_else(|| Error::DetectionFailed {
          message: String::from("failed to create macOS path monitor"),
          code: None,
-      });
+      })
+}
+
+fn create_monitor() -> Option<MacosConnectivityMonitor> {
+   let monitor = unsafe { nw_path_monitor_create() };
+   if monitor.is_null() {
+      return None;
    }
 
    let queue = DispatchQueue::new("tauri.plugin.connectivity.path", None);
-   let (tx, rx) = mpsc::channel();
+   let status = Arc::new(RwLock::new(None));
+   let handler_status = Arc::clone(&status);
    let handler = RcBlock::new(move |path: NwPath| {
-      let _ = tx.send(read_status(path));
+      if let Ok(mut status) = handler_status.write() {
+         *status = Some(read_status(path));
+      }
    });
 
    unsafe {
@@ -55,25 +75,26 @@ pub fn connection_status() -> Result<ConnectionStatus> {
       nw_path_monitor_start(monitor);
    }
 
-   // This command is a one-shot status query, so we only wait for the first path update.
-   let result = rx.recv_timeout(MONITOR_TIMEOUT);
+   Some(MacosConnectivityMonitor {
+      _monitor: monitor,
+      _queue: queue,
+      _handler: handler,
+      status,
+   })
+}
 
-   unsafe {
-      nw_path_monitor_cancel(monitor);
-      nw_release(monitor);
+impl MacosConnectivityMonitor {
+   fn current_status(&self) -> ConnectionStatus {
+      self
+         .status
+         .read()
+         .map(|status| cached_status(status.clone()))
+         .unwrap_or_else(|_| ConnectionStatus::disconnected())
    }
+}
 
-   match result {
-      Ok(status) => Ok(status),
-      Err(RecvTimeoutError::Timeout) => Err(Error::DetectionFailed {
-         message: String::from("timed out waiting for macOS network status"),
-         code: None,
-      }),
-      Err(RecvTimeoutError::Disconnected) => Err(Error::DetectionFailed {
-         message: String::from("macOS network monitor stopped before reporting status"),
-         code: None,
-      }),
-   }
+fn cached_status(status: Option<ConnectionStatus>) -> ConnectionStatus {
+   status.unwrap_or_else(ConnectionStatus::disconnected)
 }
 
 fn resolve_connection_type(wifi: bool, wired: bool, cellular: bool) -> ConnectionType {
@@ -154,5 +175,10 @@ mod tests {
          ConnectionStatus::disconnected().connection_type,
          ConnectionType::Unknown
       );
+   }
+
+   #[test]
+   fn missing_cached_status_defaults_to_disconnected() {
+      assert_eq!(cached_status(None), ConnectionStatus::disconnected());
    }
 }

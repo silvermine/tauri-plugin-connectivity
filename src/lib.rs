@@ -51,6 +51,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       .setup(|app, _api| {
          debug!("registering connectivity plugin state");
          app.manage(Connectivity);
+         #[cfg(target_os = "macos")]
+         {
+            // Start the path monitor early so the first frontend call can read a warm cache.
+            let _ = platform::connection_status();
+         }
          Ok(())
       })
       .build()
