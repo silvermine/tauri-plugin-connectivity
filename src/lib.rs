@@ -85,12 +85,17 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          #[cfg(desktop)]
          app.manage(Connectivity);
 
+         #[cfg(target_os = "macos")]
+         {
+            // Start the path monitor early so the first frontend call can read a warm cache.
+            let _ = platform::connection_status();
+         }
+
          #[cfg(mobile)]
          {
             let connectivity = mobile::init(app, _api)?;
             app.manage(Connectivity(connectivity));
          }
-
          Ok(())
       })
       .build()
