@@ -12,15 +12,18 @@ pub use types::{ConnectionStatus, ConnectionType};
 use tauri::{Manager, Runtime, plugin::TauriPlugin};
 use tracing::debug;
 
+#[cfg(mobile)]
+use mobile::Connectivity;
+
 /// Provides connectivity detection for the current platform.
 ///
-/// This is the Rust-side API for querying connection status. Platform-specific
-/// implementations will be added behind this interface.
+/// This is the Rust-side API for querying connection status. On mobile this is
+/// [`mobile::Connectivity`], which bridges to the native plugin via a
+/// `PluginHandle` and therefore carries the `R: Runtime` generic required by
+/// Tauri's mobile plugin bridge.
 #[cfg(desktop)]
+#[derive(Clone, Copy)]
 pub struct Connectivity;
-
-#[cfg(mobile)]
-pub struct Connectivity<R: Runtime>(mobile::Connectivity<R>);
 
 #[cfg(desktop)]
 impl Connectivity {
@@ -31,17 +34,12 @@ impl Connectivity {
    }
 }
 
-#[cfg(mobile)]
-impl<R: Runtime> Connectivity<R> {
-   /// Returns the current network connection status.
-   pub fn connection_status(&self) -> Result<ConnectionStatus> {
-      debug!("querying mobile connectivity status from plugin state");
-      self.0.connection_status()
-   }
-}
-
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`] to
 /// access the connectivity APIs.
+///
+/// The trait is split by platform because the return type differs: desktop uses the
+/// Tauri-agnostic `Connectivity`, while mobile delegates to the native plugin and so
+/// returns `Connectivity<R>`.
 #[cfg(desktop)]
 pub trait ConnectivityExt<R: Runtime> {
    fn connectivity(&self) -> &Connectivity;
@@ -88,7 +86,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          #[cfg(mobile)]
          {
             let connectivity = mobile::init(app, _api)?;
-            app.manage(Connectivity(connectivity));
+            app.manage(connectivity);
          }
 
          Ok(())
