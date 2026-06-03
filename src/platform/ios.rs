@@ -9,7 +9,7 @@ use crate::types::ConnectionStatus;
 
 tauri::ios_plugin_binding!(init_plugin_connectivity);
 
-pub(crate) struct IosConnectivity<R: Runtime>(PluginHandle<R>);
+pub struct IosConnectivity<R: Runtime>(PluginHandle<R>);
 
 impl<R: Runtime> Clone for IosConnectivity<R> {
    fn clone(&self) -> Self {
@@ -29,7 +29,7 @@ impl<R: Runtime> IosConnectivity<R> {
       Ok(Self(handle))
    }
 
-   pub(crate) fn connection_status(&self) -> Result<ConnectionStatus> {
+   pub fn connection_status(&self) -> Result<ConnectionStatus> {
       self
          .0
          .run_mobile_plugin("connectionStatus", ())
