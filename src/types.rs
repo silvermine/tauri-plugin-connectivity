@@ -27,7 +27,10 @@ pub enum ConnectionType {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionStatus {
-   /// Whether the device has an active internet connection.
+   /// Whether the device has an active network path.
+   ///
+   /// A connected path can still be limited or not fully usable. Check
+   /// [`Self::constrained`] when the caller needs usable internet access.
    pub connected: bool,
 
    /// Whether data usage is billed or limited (e.g. mobile data plans, capped
@@ -51,7 +54,8 @@ pub struct ConnectionStatus {
    ///   primary device is metered, or ModemManager reports cellular roaming;
    ///   passive fallback defaults to `false`
    /// - **iOS:** `NWPath.isConstrained` (Low Data Mode)
-   /// - **Android:** Data Saver / `RESTRICT_BACKGROUND_STATUS`
+   /// - **Android:** missing `NET_CAPABILITY_VALIDATED`, or Data Saver /
+   ///   `RESTRICT_BACKGROUND_STATUS` on a metered active network
    pub constrained: bool,
 
    /// The physical or logical transport used to connect to the network.

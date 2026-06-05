@@ -24,7 +24,7 @@ decisions.
 | Windows  | Yes       |
 | Linux    | Yes       |
 | macOS    | Planned   |
-| Android  | Planned   |
+| Android  | Yes       |
 | iOS      | Planned   |
 
 ## Getting Started
@@ -180,7 +180,7 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 
 | Field            | Type             | Description                                                       |
 | ---------------- | ---------------- | ----------------------------------------------------------------- |
-| `connected`      | `boolean`        | Whether the device has an active internet connection              |
+| `connected`      | `boolean`        | Whether the device has an active network path                     |
 | `metered`        | `boolean`        | Whether data usage is billed or limited                           |
 | `constrained`    | `boolean`        | Whether the connection is data-constrained or restricted          |
 | `connectionType` | `ConnectionType` | The physical transport: `wifi`, `ethernet`, `cellular`, `unknown` |
@@ -189,9 +189,9 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 
 | Field            | Windows                                                                             | Linux                                             | iOS                         | Android                            |
 | ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------- | ---------------------------------- |
-| `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL`/`LIMITED` or up IPv4/IPv6 default route fallback | `NWPath.status` satisfied   | active network with internet capability |
+| `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL`/`LIMITED` or up IPv4/IPv6 default route fallback | `NWPath.status` satisfied   | `NET_CAPABILITY_INTERNET`          |
 | `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | NetworkManager primary device `Metered`           | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
-| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; fallback defaults to `false` | `NWPath.isConstrained`      | Data Saver / `RESTRICT_BACKGROUND` |
+| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; fallback defaults to `false` | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND` on a metered active network |
 | `connectionType` | WWAN/WLAN/IANA interface type                                                       | NetworkManager device type or sysfs fallback      | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities         |
 
 ## Development Standards
