@@ -1,11 +1,11 @@
-// swift-tools-version:5.3
+// swift-tools-version: 5.5
 
 import PackageDescription
 
 let package = Package(
    name: "tauri-plugin-connectivity",
    platforms: [
-      .iOS(.v12),
+      .iOS(.v15),
    ],
    products: [
       .library(

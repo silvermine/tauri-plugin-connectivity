@@ -1,8 +1,8 @@
 use serde::de::DeserializeOwned;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::marker::PhantomData;
 use tauri::plugin::PluginApi;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "ios"))]
 use tauri::plugin::PluginHandle;
 use tauri::{AppHandle, Runtime};
 
@@ -10,7 +10,9 @@ use crate::types::ConnectionStatus;
 
 #[cfg(target_os = "android")]
 const PLUGIN_IDENTIFIER: &str = "org.silvermine.plugin.connectivity";
-#[cfg(target_os = "android")]
+#[cfg(target_os = "ios")]
+tauri::ios_plugin_binding!(init_plugin_connectivity);
+
 const COMMAND_CONNECTION_STATUS: &str = "connectionStatus";
 
 /// Initializes the Rust-side bridge to the native mobile plugin.
@@ -24,7 +26,19 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
       Ok(Connectivity::Native(handle))
    }
 
-   #[cfg(not(target_os = "android"))]
+   #[cfg(target_os = "ios")]
+   {
+      let handle = api
+         .register_ios_plugin(init_plugin_connectivity)
+         .map_err(|error| crate::Error::DetectionFailed {
+            message: error.to_string(),
+            code: None,
+         })?;
+
+      Ok(Connectivity::Native(handle))
+   }
+
+   #[cfg(not(any(target_os = "android", target_os = "ios")))]
    {
       let _ = api;
 
@@ -38,8 +52,12 @@ pub enum Connectivity<R: Runtime> {
    #[cfg(target_os = "android")]
    Native(PluginHandle<R>),
 
+   /// A registered native iOS plugin handle.
+   #[cfg(target_os = "ios")]
+   Native(PluginHandle<R>),
+
    /// A mobile platform supported by Tauri but not implemented by this plugin.
-   #[cfg(not(target_os = "android"))]
+   #[cfg(not(any(target_os = "android", target_os = "ios")))]
    Unsupported(PhantomData<R>),
 }
 
@@ -56,7 +74,15 @@ impl<R: Runtime> Connectivity<R> {
                .map_err(Into::into)
          }
 
-         #[cfg(not(target_os = "android"))]
+         #[cfg(target_os = "ios")]
+         Self::Native(handle) => handle
+            .run_mobile_plugin(COMMAND_CONNECTION_STATUS, ())
+            .map_err(|error| crate::Error::DetectionFailed {
+               message: error.to_string(),
+               code: None,
+            }),
+
+         #[cfg(not(any(target_os = "android", target_os = "ios")))]
          Self::Unsupported(_) => Err(crate::Error::Unsupported),
       }
    }

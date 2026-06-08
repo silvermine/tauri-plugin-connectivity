@@ -20,3 +20,5 @@ Thumbs.db
 # Tauri
 /gen/
 /.tauri/
+
+ios/Package.resolved
