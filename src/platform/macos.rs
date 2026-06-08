@@ -18,7 +18,6 @@ type NwPathMonitor = *mut c_void;
 #[link(name = "Network", kind = "framework")]
 unsafe extern "C" {
    fn nw_path_monitor_create() -> NwPathMonitor;
-   fn nw_path_monitor_cancel(monitor: NwPathMonitor);
    fn nw_path_monitor_set_queue(monitor: NwPathMonitor, queue: &DispatchQueue);
    fn nw_path_monitor_set_update_handler(
       monitor: NwPathMonitor,
@@ -31,6 +30,9 @@ unsafe extern "C" {
    fn nw_path_uses_interface_type(path: NwPath, interface_type: i32) -> bool;
 }
 
+// The monitor is a process-lifetime singleton stored in this `OnceLock`. It is
+// intentionally never cancelled or dropped: it lives until the process exits,
+// at which point the OS reclaims its resources.
 static MONITOR: OnceLock<Option<MacosConnectivityMonitor>> = OnceLock::new();
 
 struct MacosConnectivityMonitor {
@@ -91,14 +93,6 @@ impl MacosConnectivityMonitor {
          .read()
          .map(|status| cached_status(status.clone()))
          .unwrap_or_else(|_| ConnectionStatus::disconnected())
-   }
-}
-
-impl Drop for MacosConnectivityMonitor {
-   fn drop(&mut self) {
-      unsafe {
-         nw_path_monitor_cancel(self._monitor);
-      }
    }
 }
 
