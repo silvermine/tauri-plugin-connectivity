@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// When multiple interfaces are active simultaneously (e.g. WiFi + Cellular),
 /// this represents the preferred/primary transport as determined by the OS.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ConnectionType {
    /// Connected via Wi-Fi.
@@ -35,6 +35,8 @@ pub struct ConnectionStatus {
    ///
    /// Platform mapping:
    /// - **Windows:** `NetworkCostType` is `Unknown`, `Fixed`, or `Variable`
+   /// - **Linux:** NetworkManager primary device `Metered` is `YES` or
+   ///   `GUESS_YES`; passive fallback defaults to `false`
    /// - **iOS:** `NWPath.isExpensive`
    /// - **Android:** absence of `NET_CAPABILITY_NOT_METERED`
    pub metered: bool,
@@ -45,6 +47,9 @@ pub struct ConnectionStatus {
    /// Platform mapping:
    /// - **Windows:** `ConstrainedInternetAccess`, `ApproachingDataLimit`,
    ///   `OverDataLimit`, `Roaming`, or `BackgroundDataUsageRestricted`
+   /// - **Linux:** NetworkManager `Connectivity` is `PORTAL` or `LIMITED`,
+   ///   primary device is metered, or ModemManager reports cellular roaming;
+   ///   passive fallback defaults to `false`
    /// - **iOS:** `NWPath.isConstrained` (Low Data Mode)
    /// - **Android:** Data Saver / `RESTRICT_BACKGROUND_STATUS`
    pub constrained: bool,
@@ -95,7 +100,7 @@ mod tests {
       ];
 
       for (variant, expected) in cases {
-         let json = serde_json::to_value(&variant).unwrap();
+         let json = serde_json::to_value(variant).unwrap();
          assert_eq!(json, expected);
       }
    }
