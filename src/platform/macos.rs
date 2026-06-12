@@ -3,10 +3,13 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use block2::{Block, RcBlock};
 use dispatch2::{DispatchQueue, DispatchRetained};
+use tracing::warn;
 
 use crate::error::{Error, Result};
 use crate::types::{ConnectionStatus, ConnectionType};
 
+// Values mirror Apple's `nw_path_status_t` and `nw_interface_type_t` enums
+// from the Network framework headers.
 const NW_PATH_STATUS_SATISFIED: i32 = 1;
 const NW_INTERFACE_TYPE_WIFI: i32 = 1;
 const NW_INTERFACE_TYPE_CELLULAR: i32 = 2;
@@ -42,9 +45,18 @@ struct MacosConnectivityMonitor {
    status: Arc<RwLock<Option<ConnectionStatus>>>,
 }
 
+// SAFETY: Rust code only ever reads `status` (already `Send + Sync`); the
+// remaining fields are only used by the Network framework on its own queue,
+// and the value lives in a static so it is never dropped.
 unsafe impl Send for MacosConnectivityMonitor {}
 unsafe impl Sync for MacosConnectivityMonitor {}
 
+/// Returns the connection status last reported by the path monitor.
+///
+/// The monitor delivers path updates asynchronously on its dispatch queue,
+/// starting with an initial update shortly after `nw_path_monitor_start`.
+/// Until that first update lands, the cache is empty and this reports disconnected.
+/// Either way, re-check at the decision point rather than relying on earlier results.
 pub fn connection_status() -> Result<ConnectionStatus> {
    let monitor = MONITOR.get_or_init(create_monitor);
 
@@ -60,15 +72,19 @@ pub fn connection_status() -> Result<ConnectionStatus> {
 fn create_monitor() -> Option<MacosConnectivityMonitor> {
    let monitor = unsafe { nw_path_monitor_create() };
    if monitor.is_null() {
+      warn!("failed to create macOS path monitor");
       return None;
    }
 
    let queue = DispatchQueue::new("tauri.plugin.connectivity.path", None);
    let status = Arc::new(RwLock::new(None));
    let handler_status = Arc::clone(&status);
-   let handler = RcBlock::new(move |path: NwPath| {
-      if let Ok(mut status) = handler_status.write() {
+   let handler = RcBlock::new(move |path: NwPath| match handler_status.write() {
+      Ok(mut status) => {
          *status = Some(read_status(path));
+      }
+      Err(error) => {
+         warn!(%error, "failed to update macOS connection status cache");
       }
    });
 
@@ -92,7 +108,10 @@ impl MacosConnectivityMonitor {
          .status
          .read()
          .map(|status| cached_status(status.clone()))
-         .unwrap_or_else(|_| ConnectionStatus::disconnected())
+         .unwrap_or_else(|error| {
+            warn!(%error, "failed to read macOS connection status cache");
+            ConnectionStatus::disconnected()
+         })
    }
 }
 
@@ -100,6 +119,8 @@ fn cached_status(status: Option<ConnectionStatus>) -> ConnectionStatus {
    status.unwrap_or_else(ConnectionStatus::disconnected)
 }
 
+/// Other interface types (loopback, `nw_interface_type_other`) intentionally
+/// map to `Unknown`: the plugin only distinguishes transports callers can act on.
 fn resolve_connection_type(wifi: bool, wired: bool, cellular: bool) -> ConnectionType {
    if wifi {
       ConnectionType::Wifi
@@ -133,17 +154,34 @@ fn is_connected_status(status: i32) -> bool {
 fn read_status(path: NwPath) -> ConnectionStatus {
    let connected = is_connected_status(unsafe { nw_path_get_status(path) });
    if !connected {
-      return ConnectionStatus::disconnected();
+      return assemble_status(false, false, false, false, false, false);
    }
 
+   let metered = unsafe { nw_path_is_expensive(path) };
+   let constrained = unsafe { nw_path_is_constrained(path) };
    let wifi = unsafe { nw_path_uses_interface_type(path, NW_INTERFACE_TYPE_WIFI) };
    let wired = unsafe { nw_path_uses_interface_type(path, NW_INTERFACE_TYPE_WIRED) };
    let cellular = unsafe { nw_path_uses_interface_type(path, NW_INTERFACE_TYPE_CELLULAR) };
 
+   assemble_status(true, metered, constrained, wifi, wired, cellular)
+}
+
+fn assemble_status(
+   connected: bool,
+   metered: bool,
+   constrained: bool,
+   wifi: bool,
+   wired: bool,
+   cellular: bool,
+) -> ConnectionStatus {
+   if !connected {
+      return ConnectionStatus::disconnected();
+   }
+
    ConnectionStatus {
       connected: true,
-      metered: unsafe { nw_path_is_expensive(path) },
-      constrained: unsafe { nw_path_is_constrained(path) },
+      metered,
+      constrained,
       connection_type: resolve_connection_type(wifi, wired, cellular),
    }
 }
@@ -183,6 +221,27 @@ mod tests {
    #[test]
    fn missing_cached_status_defaults_to_disconnected() {
       assert_eq!(cached_status(None), ConnectionStatus::disconnected());
+   }
+
+   #[test]
+   fn disconnected_assembled_status_uses_disconnected_defaults() {
+      assert_eq!(
+         assemble_status(false, true, true, true, true, true),
+         ConnectionStatus::disconnected()
+      );
+   }
+
+   #[test]
+   fn connected_assembled_status_preserves_policy_flags_and_connection_type() {
+      assert_eq!(
+         assemble_status(true, true, true, false, false, true),
+         ConnectionStatus {
+            connected: true,
+            metered: true,
+            constrained: true,
+            connection_type: ConnectionType::Cellular,
+         }
+      );
    }
 
    #[test]

@@ -87,7 +87,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 
          #[cfg(target_os = "macos")]
          {
-            // Start the path monitor early so the first frontend call can read a warm cache.
+            // Start the path monitor early. Its first update arrives
+            // asynchronously, so this does not guarantee a populated cache on
+            // return — it ensures the update has normally landed long before
+            // the webview loads and the frontend makes its first call. Until
+            // then, reads report disconnected (see `platform::macos`).
             let _ = platform::connection_status();
          }
 
