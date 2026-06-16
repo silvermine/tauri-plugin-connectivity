@@ -1,9 +1,14 @@
 use tauri::{AppHandle, Runtime, command};
 use tracing::{debug, warn};
 
+#[cfg(mobile)]
+use crate::ConnectivityExt;
+#[cfg(desktop)]
+use crate::Error;
 use crate::error::Result;
+#[cfg(desktop)]
+use crate::platform;
 use crate::types::ConnectionStatus;
-use crate::{Error, platform};
 
 /// Returns the current network connection status.
 ///
@@ -12,6 +17,10 @@ use crate::{Error, platform};
 pub(crate) async fn connection_status<R: Runtime>(_app: AppHandle<R>) -> Result<ConnectionStatus> {
    debug!("received frontend request for connection_status");
 
+   #[cfg(mobile)]
+   let result = _app.connectivity().connection_status();
+
+   #[cfg(desktop)]
    let result = tauri::async_runtime::spawn_blocking(platform::connection_status)
       .await
       .map_err(|error| Error::DetectionFailed {

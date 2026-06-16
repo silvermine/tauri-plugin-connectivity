@@ -1,3 +1,8 @@
+//! Rust-native desktop connectivity backends.
+//!
+//! Mobile platforms use Tauri's native plugin bridge through `src/mobile.rs`
+//! instead of this module.
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]

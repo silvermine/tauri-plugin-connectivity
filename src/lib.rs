@@ -1,5 +1,8 @@
 mod commands;
 mod error;
+#[cfg(mobile)]
+mod mobile;
+#[cfg(desktop)]
 mod platform;
 mod types;
 
@@ -13,8 +16,13 @@ use tracing::debug;
 ///
 /// This is the Rust-side API for querying connection status. Platform-specific
 /// implementations will be added behind this interface.
+#[cfg(desktop)]
 pub struct Connectivity;
 
+#[cfg(mobile)]
+pub struct Connectivity<R: Runtime>(mobile::Connectivity<R>);
+
+#[cfg(desktop)]
 impl Connectivity {
    /// Returns the current network connection status.
    pub fn connection_status(&self) -> Result<ConnectionStatus> {
@@ -23,15 +31,38 @@ impl Connectivity {
    }
 }
 
+#[cfg(mobile)]
+impl<R: Runtime> Connectivity<R> {
+   /// Returns the current network connection status.
+   pub fn connection_status(&self) -> Result<ConnectionStatus> {
+      debug!("querying mobile connectivity status from plugin state");
+      self.0.connection_status()
+   }
+}
+
 /// Extensions to [`tauri::App`], [`tauri::AppHandle`] and [`tauri::Window`] to
 /// access the connectivity APIs.
+#[cfg(desktop)]
 pub trait ConnectivityExt<R: Runtime> {
    fn connectivity(&self) -> &Connectivity;
 }
 
+#[cfg(mobile)]
+pub trait ConnectivityExt<R: Runtime> {
+   fn connectivity(&self) -> &Connectivity<R>;
+}
+
+#[cfg(desktop)]
 impl<R: Runtime, T: Manager<R>> ConnectivityExt<R> for T {
    fn connectivity(&self) -> &Connectivity {
       self.state::<Connectivity>().inner()
+   }
+}
+
+#[cfg(mobile)]
+impl<R: Runtime, T: Manager<R>> ConnectivityExt<R> for T {
+   fn connectivity(&self) -> &Connectivity<R> {
+      self.state::<Connectivity<R>>().inner()
    }
 }
 
@@ -50,7 +81,16 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       .invoke_handler(tauri::generate_handler![commands::connection_status])
       .setup(|app, _api| {
          debug!("registering connectivity plugin state");
+
+         #[cfg(desktop)]
          app.manage(Connectivity);
+
+         #[cfg(mobile)]
+         {
+            let connectivity = mobile::init(app, _api)?;
+            app.manage(Connectivity(connectivity));
+         }
+
          Ok(())
       })
       .build()

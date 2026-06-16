@@ -61,6 +61,16 @@ impl From<windows::core::Error> for Error {
    }
 }
 
+#[cfg(mobile)]
+impl From<tauri::plugin::mobile::PluginInvokeError> for Error {
+   fn from(value: tauri::plugin::mobile::PluginInvokeError) -> Self {
+      Self::DetectionFailed {
+         message: value.to_string(),
+         code: None,
+      }
+   }
+}
+
 #[cfg(test)]
 mod tests {
    use super::*;
