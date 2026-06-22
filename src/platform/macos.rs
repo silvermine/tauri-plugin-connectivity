@@ -1,5 +1,5 @@
 use std::ffi::c_void;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use block2::{Block, RcBlock};
 use dispatch2::{DispatchQueue, DispatchRetained};
@@ -17,6 +17,7 @@ const NW_INTERFACE_TYPE_WIRED: i32 = 3;
 
 type NwPath = *mut c_void;
 type NwPathMonitor = *mut c_void;
+type NwInterface = *mut c_void;
 
 #[link(name = "Network", kind = "framework")]
 unsafe extern "C" {
@@ -30,7 +31,11 @@ unsafe extern "C" {
    fn nw_path_get_status(path: NwPath) -> i32;
    fn nw_path_is_expensive(path: NwPath) -> bool;
    fn nw_path_is_constrained(path: NwPath) -> bool;
-   fn nw_path_uses_interface_type(path: NwPath, interface_type: i32) -> bool;
+   fn nw_path_enumerate_interfaces(
+      path: NwPath,
+      enumerate_block: &Block<dyn Fn(NwInterface) -> u8>,
+   );
+   fn nw_interface_get_type(interface: NwInterface) -> i32;
 }
 
 // The monitor is a process-lifetime singleton stored in this `OnceLock`. It is
@@ -121,16 +126,48 @@ fn cached_status(status: Option<ConnectionStatus>) -> ConnectionStatus {
 
 /// Other interface types (loopback, `nw_interface_type_other`) intentionally
 /// map to `Unknown`: the plugin only distinguishes transports callers can act on.
-fn resolve_connection_type(wifi: bool, wired: bool, cellular: bool) -> ConnectionType {
-   if wifi {
-      ConnectionType::Wifi
-   } else if wired {
-      ConnectionType::Ethernet
-   } else if cellular {
-      ConnectionType::Cellular
-   } else {
-      ConnectionType::Unknown
+fn map_interface_type(interface_type: i32) -> ConnectionType {
+   match interface_type {
+      NW_INTERFACE_TYPE_WIFI => ConnectionType::Wifi,
+      NW_INTERFACE_TYPE_WIRED => ConnectionType::Ethernet,
+      NW_INTERFACE_TYPE_CELLULAR => ConnectionType::Cellular,
+      _ => ConnectionType::Unknown,
    }
+}
+
+fn resolve_connection_type(path: NwPath) -> ConnectionType {
+   // Enumeration is synchronous, but the block must be `'static`, so the value
+   // is shared back out through an `Arc`. The lock can only be poisoned by a
+   // panic while held, which cannot happen here, so poison is recovered rather
+   // than treated as an error.
+   let first_type = Arc::new(Mutex::new(None::<i32>));
+   let first_type_for_block = Arc::clone(&first_type);
+   let block = RcBlock::new(move |interface: NwInterface| -> u8 {
+      let mut first_type = first_type_for_block
+         .lock()
+         .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+      // Path interfaces are enumerated in order of preference, so the first
+      // interface is the OS-selected primary transport. Record only that one
+      // and stop the enumeration.
+      if first_type.is_none() {
+         *first_type = Some(unsafe { nw_interface_get_type(interface) });
+      }
+
+      0
+   });
+
+   unsafe {
+      nw_path_enumerate_interfaces(path, &block);
+   }
+
+   let first_type = *first_type
+      .lock()
+      .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+   first_type
+      .map(map_interface_type)
+      .unwrap_or(ConnectionType::Unknown)
 }
 
 /// Apple reports path availability, not whether a specific request will succeed.
@@ -154,25 +191,21 @@ fn is_connected_status(status: i32) -> bool {
 fn read_status(path: NwPath) -> ConnectionStatus {
    let connected = is_connected_status(unsafe { nw_path_get_status(path) });
    if !connected {
-      return assemble_status(false, false, false, false, false, false);
+      return assemble_status(false, false, false, ConnectionType::Unknown);
    }
 
    let metered = unsafe { nw_path_is_expensive(path) };
    let constrained = unsafe { nw_path_is_constrained(path) };
-   let wifi = unsafe { nw_path_uses_interface_type(path, NW_INTERFACE_TYPE_WIFI) };
-   let wired = unsafe { nw_path_uses_interface_type(path, NW_INTERFACE_TYPE_WIRED) };
-   let cellular = unsafe { nw_path_uses_interface_type(path, NW_INTERFACE_TYPE_CELLULAR) };
+   let connection_type = resolve_connection_type(path);
 
-   assemble_status(true, metered, constrained, wifi, wired, cellular)
+   assemble_status(true, metered, constrained, connection_type)
 }
 
 fn assemble_status(
    connected: bool,
    metered: bool,
    constrained: bool,
-   wifi: bool,
-   wired: bool,
-   cellular: bool,
+   connection_type: ConnectionType,
 ) -> ConnectionStatus {
    if !connected {
       return ConnectionStatus::disconnected();
@@ -182,7 +215,7 @@ fn assemble_status(
       connected: true,
       metered,
       constrained,
-      connection_type: resolve_connection_type(wifi, wired, cellular),
+      connection_type,
    }
 }
 
@@ -191,23 +224,21 @@ mod tests {
    use super::*;
 
    #[test]
-   fn maps_interface_flags_by_priority() {
+   fn maps_interface_type_to_connection_type() {
       assert_eq!(
-         resolve_connection_type(true, true, true),
+         map_interface_type(NW_INTERFACE_TYPE_WIFI),
          ConnectionType::Wifi
       );
       assert_eq!(
-         resolve_connection_type(false, true, true),
+         map_interface_type(NW_INTERFACE_TYPE_WIRED),
          ConnectionType::Ethernet
       );
       assert_eq!(
-         resolve_connection_type(false, false, true),
+         map_interface_type(NW_INTERFACE_TYPE_CELLULAR),
          ConnectionType::Cellular
       );
-      assert_eq!(
-         resolve_connection_type(false, false, false),
-         ConnectionType::Unknown
-      );
+      assert_eq!(map_interface_type(0), ConnectionType::Unknown);
+      assert_eq!(map_interface_type(4), ConnectionType::Unknown);
    }
 
    #[test]
@@ -226,7 +257,7 @@ mod tests {
    #[test]
    fn disconnected_assembled_status_uses_disconnected_defaults() {
       assert_eq!(
-         assemble_status(false, true, true, true, true, true),
+         assemble_status(false, true, true, ConnectionType::Wifi),
          ConnectionStatus::disconnected()
       );
    }
@@ -234,7 +265,7 @@ mod tests {
    #[test]
    fn connected_assembled_status_preserves_policy_flags_and_connection_type() {
       assert_eq!(
-         assemble_status(true, true, true, false, false, true),
+         assemble_status(true, true, true, ConnectionType::Cellular),
          ConnectionStatus {
             connected: true,
             metered: true,
