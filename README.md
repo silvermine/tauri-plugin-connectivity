@@ -17,13 +17,13 @@ decisions.
    * Detect connection type (WiFi, Ethernet, Cellular)
    * Query metered and constrained status for network policy decisions
    * Check internet reachability
-   * Cross-platform support (Windows, Linux, iOS, Android)
+   * Cross-platform support (Windows, Linux, macOS, iOS, Android)
 
 | Platform | Supported |
 | -------- | --------- |
 | Windows  | Yes       |
 | Linux    | Yes       |
-| macOS    | Planned   |
+| macOS    | Yes       |
 | Android  | Yes       |
 | iOS      | Planned   |
 
@@ -187,12 +187,12 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 
 #### Platform mapping
 
-| Field            | Windows                                                                             | Linux                                             | iOS                         | Android                            |
-| ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------- | ---------------------------------- |
-| `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL`/`LIMITED` or up IPv4/IPv6 default route fallback | `NWPath.status` satisfied   | `NET_CAPABILITY_INTERNET`          |
-| `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | NetworkManager primary device `Metered`           | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
-| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; fallback defaults to `false` | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND` on a metered active network |
-| `connectionType` | WWAN/WLAN/IANA interface type                                                       | NetworkManager device type or sysfs fallback      | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities         |
+| Field            | Windows                                                                             | Linux                                             | macOS                                          | iOS                         | Android                            |
+| ---------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------- | --------------------------- | ---------------------------------- |
+| `connected`      | `InternetAccess` or `ConstrainedInternetAccess`                                     | NetworkManager `FULL`/`PORTAL`/`LIMITED` or up IPv4/IPv6 default route fallback | `nw_path_get_status == satisfied`              | `NWPath.status` satisfied   | `NET_CAPABILITY_INTERNET`          |
+| `metered`        | `NetworkCostType` Unknown/Fixed/Variable                                            | NetworkManager primary device `Metered`           | `nw_path_is_expensive`                         | `NWPath.isExpensive`        | absence of `NOT_METERED`           |
+| `constrained`    | `ConstrainedInternetAccess`, data-limit, roaming, or background data restrictions   | NetworkManager portal/limited/metered or cellular roaming; fallback defaults to `false` | `nw_path_is_constrained`                       | `NWPath.isConstrained`      | missing `VALIDATED`, or Data Saver / `RESTRICT_BACKGROUND` on a metered active network |
+| `connectionType` | WWAN/WLAN/IANA interface type                                                       | NetworkManager device type or sysfs fallback      | `nw_path_uses_interface_type`                  | `NWInterface.InterfaceType` | `TRANSPORT_*` capabilities         |
 
 ## Development Standards
 

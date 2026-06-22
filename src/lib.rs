@@ -85,12 +85,21 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
          #[cfg(desktop)]
          app.manage(Connectivity);
 
+         #[cfg(target_os = "macos")]
+         {
+            // Start the path monitor early. Its first update arrives
+            // asynchronously, so this does not guarantee a populated cache on
+            // return — it ensures the update has normally landed long before
+            // the webview loads and the frontend makes its first call. Until
+            // then, reads report disconnected (see `platform::macos`).
+            let _ = platform::connection_status();
+         }
+
          #[cfg(mobile)]
          {
             let connectivity = mobile::init(app, _api)?;
             app.manage(Connectivity(connectivity));
          }
-
          Ok(())
       })
       .build()
