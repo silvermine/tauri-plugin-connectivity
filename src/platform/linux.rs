@@ -14,10 +14,11 @@ use zbus::zvariant::{ObjectPath, OwnedObjectPath};
 use crate::error::Result;
 use crate::types::{ConnectionStatus, ConnectionType};
 
-// zbus applies this timeout to each D-Bus method call. It does not bound the
-// initial socket connect/Hello handshake in `ConnectionBuilder::build()`, and it
-// is not a total wall-clock budget for the full Linux status query.
-const DBUS_METHOD_TIMEOUT: Duration = Duration::from_secs(2);
+// These local D-Bus calls read cached service state and normally complete within
+// milliseconds. Bound each call so a stalled service cannot occupy the blocking
+// thread for long before the query uses its fallback. This does not bound the
+// initial socket connect/Hello handshake or the total Linux status query.
+const DBUS_METHOD_TIMEOUT: Duration = Duration::from_millis(500);
 
 const DBUS_SERVICE: &str = "org.freedesktop.DBus";
 
@@ -635,6 +636,11 @@ mod tests {
    use std::sync::atomic::{AtomicUsize, Ordering};
 
    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+   #[test]
+   fn limits_each_dbus_method_call_to_500_milliseconds() {
+      assert_eq!(DBUS_METHOD_TIMEOUT, Duration::from_millis(500));
+   }
 
    #[test]
    fn maps_connectivity_states() {
