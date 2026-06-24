@@ -25,7 +25,7 @@ decisions.
 | Linux    | Yes       |
 | macOS    | Yes       |
 | Android  | Yes       |
-| iOS      | Planned   |
+| iOS      | Yes       |
 
 ## Getting Started
 
