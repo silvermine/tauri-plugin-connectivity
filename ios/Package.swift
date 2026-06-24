@@ -14,13 +14,15 @@ let package = Package(
          targets: ["tauri-plugin-connectivity"])
    ],
    dependencies: [
-      .package(name: "Tauri", path: "../.tauri/tauri-api")
+      .package(name: "Tauri", path: "../.tauri/tauri-api"),
+      .package(name: "ConnectivityCore", path: "ConnectivityCore"),
    ],
    targets: [
       .target(
          name: "tauri-plugin-connectivity",
          dependencies: [
-            .byName(name: "Tauri")
+            .byName(name: "Tauri"),
+            .product(name: "ConnectivityCore", package: "ConnectivityCore"),
          ],
          path: "Sources")
    ]

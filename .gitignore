@@ -21,4 +21,8 @@ Thumbs.db
 /gen/
 /.tauri/
 
+# SwiftPM
+.build/
+.swiftpm/
 ios/Package.resolved
+ios/ConnectivityCore/Package.resolved

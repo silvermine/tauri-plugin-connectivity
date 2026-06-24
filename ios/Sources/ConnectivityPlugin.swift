@@ -1,19 +1,13 @@
+import ConnectivityCore
 import Foundation
 import Network
 import Tauri
-
-private enum ConnectionTypePayload: String, Encodable {
-   case wifi
-   case ethernet
-   case cellular
-   case unknown
-}
 
 private struct ConnectionStatusPayload: Encodable {
    let connected: Bool
    let metered: Bool
    let constrained: Bool
-   let connectionType: ConnectionTypePayload
+   let connectionType: ConnectionType
 }
 
 class ConnectivityPlugin: Plugin {
@@ -68,15 +62,15 @@ class ConnectivityPlugin: Plugin {
       ))
    }
 
-   private static func resolveConnectionType(_ path: NWPath) -> ConnectionTypePayload {
-      if path.usesInterfaceType(.wifi) {
-         return .wifi
-      } else if path.usesInterfaceType(.wiredEthernet) {
-         return .ethernet
-      } else if path.usesInterfaceType(.cellular) {
-         return .cellular
-      }
-      return .unknown
+   // Adapter over `IosConnectivityMapper`
+   // A satisfied path that uses only `.other` or
+   // `.loopback` interfaces matches none of these and maps to `.unknown`.
+   private static func resolveConnectionType(_ path: NWPath) -> ConnectionType {
+      IosConnectivityMapper.connectionType(
+         hasWifi: path.usesInterfaceType(.wifi),
+         hasEthernet: path.usesInterfaceType(.wiredEthernet),
+         hasCellular: path.usesInterfaceType(.cellular)
+      )
    }
 }
 
