@@ -1,13 +1,23 @@
-import { connectionStatus, type ConnectionStatus } from '@silvermine/tauri-plugin-connectivity';
+import {
+   connectionStatus,
+   supportedConnectionTypes,
+   type ConnectionStatus,
+   type ConnectionType,
+} from '@silvermine/tauri-plugin-connectivity';
 
 import './styles.css';
+
+interface ConnectivitySnapshot {
+   status: ConnectionStatus;
+   supportedConnectionTypes: ConnectionType[];
+}
 
 function renderLoading(): void {
    document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <main class="page">
          <section class="panel">
             <h1>Tauri Plugin Connectivity</h1>
-            <p>Loading connection status...</p>
+            <p>Loading connectivity details...</p>
          </section>
       </main>
    `;
@@ -18,7 +28,7 @@ function renderError(error: unknown): void {
       <main class="page">
          <section class="panel">
             <h1>Tauri Plugin Connectivity</h1>
-            <p class="error">Failed to query connection status.</p>
+            <p class="error">Failed to query connectivity details.</p>
             <pre id="error-details"></pre>
             <button id="refresh" type="button">Try again</button>
          </section>
@@ -30,33 +40,45 @@ function renderError(error: unknown): void {
    bindRefresh();
 }
 
-function renderStatus(status: ConnectionStatus): void {
+function renderSnapshot(snapshot: ConnectivitySnapshot): void {
+   const supportedTypes = snapshot.supportedConnectionTypes
+      .map((connectionType) => {
+         return `<li>${connectionType}</li>`;
+      })
+      .join('');
+
    document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <main class="page">
          <section class="panel">
             <h1>Tauri Plugin Connectivity</h1>
-            <p>Query the plugin and inspect the current network status.</p>
+            <p>Query the plugin and inspect current and supported network transports.</p>
             <dl class="status-grid">
                <div>
                   <dt>Connected</dt>
-                  <dd>${status.connected}</dd>
+                  <dd>${snapshot.status.connected}</dd>
                </div>
                <div>
                   <dt>Connection Type</dt>
-                  <dd>${status.connectionType}</dd>
+                  <dd>${snapshot.status.connectionType}</dd>
                </div>
                <div>
                   <dt>Metered</dt>
-                  <dd>${status.metered}</dd>
+                  <dd>${snapshot.status.metered}</dd>
                </div>
                <div>
                   <dt>Constrained</dt>
-                  <dd>${status.constrained}</dd>
+                  <dd>${snapshot.status.constrained}</dd>
                </div>
             </dl>
-            <button id="refresh" type="button">Refresh status</button>
+            <section class="supported-section" aria-labelledby="supported-heading">
+               <h2 id="supported-heading">Supported Connection Types</h2>
+               <ul class="supported-list">
+                  ${supportedTypes || '<li class="muted">none reported</li>'}
+               </ul>
+            </section>
+            <button id="refresh" type="button">Refresh</button>
             <h2>Raw response</h2>
-            <pre>${JSON.stringify(status, null, 3)}</pre>
+            <pre>${JSON.stringify(snapshot, null, 3)}</pre>
          </section>
       </main>
    `;
@@ -64,11 +86,19 @@ function renderStatus(status: ConnectionStatus): void {
    bindRefresh();
 }
 
-async function loadStatus(): Promise<void> {
+async function loadConnectivity(): Promise<void> {
    renderLoading();
 
    try {
-      renderStatus(await connectionStatus());
+      const [ status, supportedTypes ] = await Promise.all([
+         connectionStatus(),
+         supportedConnectionTypes(),
+      ]);
+
+      renderSnapshot({
+         status,
+         supportedConnectionTypes: supportedTypes,
+      });
    } catch(error) {
       renderError(error);
    }
@@ -76,8 +106,8 @@ async function loadStatus(): Promise<void> {
 
 function bindRefresh(): void {
    document.querySelector<HTMLButtonElement>('#refresh')?.addEventListener('click', () => {
-      void loadStatus();
+      void loadConnectivity();
    });
 }
 
-void loadStatus();
+void loadConnectivity();
