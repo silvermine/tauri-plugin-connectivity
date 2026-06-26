@@ -16,4 +16,9 @@ class ConnectivityPlugin(activity: Activity) : Plugin(activity) {
    fun connectionStatus(invoke: Invoke) {
       invoke.resolve(connectivity.connectionStatus())
    }
+
+   @Command
+   fun supportedConnectionTypes(invoke: Invoke) {
+      invoke.resolve(connectivity.supportedConnectionTypes())
+   }
 }
