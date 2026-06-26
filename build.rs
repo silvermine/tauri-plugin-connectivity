@@ -1,4 +1,4 @@
-const COMMANDS: &[&str] = &["connection_status"];
+const COMMANDS: &[&str] = &["connection_status", "supported_connection_types"];
 
 fn main() {
    tauri_plugin::Builder::new(COMMANDS)

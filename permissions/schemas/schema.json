@@ -307,10 +307,22 @@
           "markdownDescription": "Denies the connection_status command without any pre-configured scope."
         },
         {
-          "description": "Allows querying the current network connection status.\n#### This default permission set includes:\n\n- `allow-connection-status`",
+          "description": "Enables the supported_connection_types command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-supported-connection-types",
+          "markdownDescription": "Enables the supported_connection_types command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the supported_connection_types command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-supported-connection-types",
+          "markdownDescription": "Denies the supported_connection_types command without any pre-configured scope."
+        },
+        {
+          "description": "Allows querying the current network connection status and supported connection transport classes.\n#### This default permission set includes:\n\n- `allow-connection-status`\n- `allow-supported-connection-types`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Allows querying the current network connection status.\n#### This default permission set includes:\n\n- `allow-connection-status`"
+          "markdownDescription": "Allows querying the current network connection status and supported connection transport classes.\n#### This default permission set includes:\n\n- `allow-connection-status`\n- `allow-supported-connection-types`"
         }
       ]
     }

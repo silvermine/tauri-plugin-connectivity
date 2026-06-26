@@ -67,3 +67,13 @@ export interface ConnectionStatus {
 export async function connectionStatus(): Promise<ConnectionStatus> {
    return invoke<ConnectionStatus>('plugin:connectivity|connection_status');
 }
+
+/**
+ * Returns the supported physical connection transport classes for this device.
+ *
+ * The result is deduplicated, excludes `'unknown'`, and represents transport
+ * classes the device can use rather than the currently selected connection.
+ */
+export async function supportedConnectionTypes(): Promise<ConnectionType[]> {
+   return invoke<ConnectionType[]>('plugin:connectivity|supported_connection_types');
+}
