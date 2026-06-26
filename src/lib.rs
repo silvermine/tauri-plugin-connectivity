@@ -29,6 +29,12 @@ impl Connectivity {
       debug!("querying connectivity status from plugin state");
       platform::connection_status()
    }
+
+   /// Returns the supported physical connection transport classes.
+   pub fn supported_connection_types(&self) -> Result<Vec<ConnectionType>> {
+      debug!("querying supported connection types from plugin state");
+      platform::supported_connection_types()
+   }
 }
 
 #[cfg(mobile)]
@@ -37,6 +43,12 @@ impl<R: Runtime> Connectivity<R> {
    pub fn connection_status(&self) -> Result<ConnectionStatus> {
       debug!("querying mobile connectivity status from plugin state");
       self.0.connection_status()
+   }
+
+   /// Returns the supported physical connection transport classes.
+   pub fn supported_connection_types(&self) -> Result<Vec<ConnectionType>> {
+      debug!("querying mobile supported connection types from plugin state");
+      self.0.supported_connection_types()
    }
 }
 
@@ -78,7 +90,10 @@ impl<R: Runtime, T: Manager<R>> ConnectivityExt<R> for T {
 /// ```
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
    tauri::plugin::Builder::new("connectivity")
-      .invoke_handler(tauri::generate_handler![commands::connection_status])
+      .invoke_handler(tauri::generate_handler![
+         commands::connection_status,
+         commands::supported_connection_types
+      ])
       .setup(|app, _api| {
          debug!("registering connectivity plugin state");
 

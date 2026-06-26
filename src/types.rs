@@ -20,6 +20,45 @@ pub enum ConnectionType {
    Unknown,
 }
 
+/// Deduplicates known connection transport classes in stable API order.
+#[derive(Debug, Default)]
+pub(crate) struct ConnectionTypes {
+   wifi: bool,
+   ethernet: bool,
+   cellular: bool,
+}
+
+impl ConnectionTypes {
+   pub(crate) fn new() -> Self {
+      Self::default()
+   }
+
+   pub(crate) fn insert(&mut self, connection_type: ConnectionType) {
+      match connection_type {
+         ConnectionType::Wifi => self.wifi = true,
+         ConnectionType::Ethernet => self.ethernet = true,
+         ConnectionType::Cellular => self.cellular = true,
+         ConnectionType::Unknown => {}
+      }
+   }
+
+   pub(crate) fn into_vec(self) -> Vec<ConnectionType> {
+      let mut connection_types = Vec::with_capacity(3);
+
+      if self.wifi {
+         connection_types.push(ConnectionType::Wifi);
+      }
+      if self.ethernet {
+         connection_types.push(ConnectionType::Ethernet);
+      }
+      if self.cellular {
+         connection_types.push(ConnectionType::Cellular);
+      }
+
+      connection_types
+   }
+}
+
 /// Information about the current network connection.
 ///
 /// Combines reachability, cost/constraint flags, and the physical [`ConnectionType`]
@@ -144,5 +183,34 @@ mod tests {
       assert!(!status.metered);
       assert!(!status.constrained);
       assert_eq!(status.connection_type, ConnectionType::Unknown);
+   }
+
+   #[test]
+   fn connection_types_dedupes_known_types_and_ignores_unknown() {
+      let mut connection_types = ConnectionTypes::new();
+
+      connection_types.insert(ConnectionType::Cellular);
+      connection_types.insert(ConnectionType::Unknown);
+      connection_types.insert(ConnectionType::Wifi);
+      connection_types.insert(ConnectionType::Cellular);
+      connection_types.insert(ConnectionType::Ethernet);
+
+      assert_eq!(
+         connection_types.into_vec(),
+         vec![
+            ConnectionType::Wifi,
+            ConnectionType::Ethernet,
+            ConnectionType::Cellular,
+         ]
+      );
+   }
+
+   #[test]
+   fn connection_types_is_empty_when_only_unknown_was_inserted() {
+      let mut connection_types = ConnectionTypes::new();
+
+      connection_types.insert(ConnectionType::Unknown);
+
+      assert!(connection_types.into_vec().is_empty());
    }
 }
