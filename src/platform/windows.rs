@@ -2,9 +2,15 @@ use tracing::{debug, warn};
 use windows::Networking::Connectivity::{
    ConnectionCost, ConnectionProfile, NetworkConnectivityLevel, NetworkCostType, NetworkInformation,
 };
+use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, NO_ERROR};
+use windows::Win32::NetworkManagement::IpHelper::{
+   GAA_FLAG_INCLUDE_ALL_INTERFACES, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
+   GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_UNICAST, GetAdaptersAddresses, IP_ADAPTER_ADDRESSES_LH,
+};
+use windows::Win32::Networking::WinSock::AF_UNSPEC;
 
-use crate::error::Result;
-use crate::types::{ConnectionStatus, ConnectionType};
+use crate::error::{Error, Result};
+use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
 
 /// [`IanaInterfaceType`](https://www.iana.org/assignments/ianaiftype-mib/ianaiftype-mib) values.
 /// IANA interface type for Ethernet-like interfaces (`ethernetCsmacd`).
@@ -86,6 +92,21 @@ pub fn connection_status() -> Result<ConnectionStatus> {
    );
 
    Ok(status)
+}
+
+/// Returns the supported physical connection transport classes.
+pub fn supported_connection_types() -> Result<Vec<ConnectionType>> {
+   debug!("querying Windows supported connection types");
+
+   // Use Win32 adapter enumeration rather than WinRT connection profiles:
+   // `GetAdaptersAddresses` returns adapters present on the local computer,
+   // while `NetworkInformation::GetConnectionProfiles()` can include saved
+   // profiles that are not current hardware. The API and buffer contract are
+   // documented here:
+   // https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getadaptersaddresses
+   Ok(collect_supported_connection_types(
+      adapter_interface_types()?
+   ))
 }
 
 /// The WinRT binding can return a success-coded error when the API succeeds but
@@ -188,6 +209,87 @@ fn map_iana_interface_type(iana_interface_type: u32) -> ConnectionType {
    }
 }
 
+fn collect_supported_connection_types(
+   iana_interface_types: impl IntoIterator<Item = u32>,
+) -> Vec<ConnectionType> {
+   let mut connection_types = ConnectionTypes::new();
+
+   for iana_interface_type in iana_interface_types {
+      connection_types.insert(map_iana_interface_type(iana_interface_type));
+   }
+
+   connection_types.into_vec()
+}
+
+fn adapter_interface_types() -> Result<Vec<u32>> {
+   // Microsoft recommends a 15 KB initial buffer to avoid repeated allocation
+   // for typical adapter lists. If the buffer is still too small,
+   // `ERROR_BUFFER_OVERFLOW` returns the required size.
+   // https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getadaptersaddresses
+   let mut size = 15 * 1024;
+   let mut buffer = adapter_buffer(size);
+
+   let mut result = unsafe {
+      // `GAA_FLAG_INCLUDE_ALL_INTERFACES` includes adapters regardless of
+      // operational state, matching the supported-hardware contract. The skip
+      // flags avoid populating address lists we do not inspect.
+      // https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getadaptersaddresses
+      GetAdaptersAddresses(
+         AF_UNSPEC.0.into(),
+         GAA_FLAG_INCLUDE_ALL_INTERFACES
+            | GAA_FLAG_SKIP_UNICAST
+            | GAA_FLAG_SKIP_ANYCAST
+            | GAA_FLAG_SKIP_MULTICAST
+            | GAA_FLAG_SKIP_DNS_SERVER,
+         None,
+         Some(buffer.as_mut_ptr()),
+         &mut size,
+      )
+   };
+
+   if result == ERROR_BUFFER_OVERFLOW.0 {
+      buffer = adapter_buffer(size);
+      result = unsafe {
+         GetAdaptersAddresses(
+            AF_UNSPEC.0.into(),
+            GAA_FLAG_INCLUDE_ALL_INTERFACES
+               | GAA_FLAG_SKIP_UNICAST
+               | GAA_FLAG_SKIP_ANYCAST
+               | GAA_FLAG_SKIP_MULTICAST
+               | GAA_FLAG_SKIP_DNS_SERVER,
+            None,
+            Some(buffer.as_mut_ptr()),
+            &mut size,
+         )
+      };
+   }
+
+   if result != NO_ERROR.0 {
+      return Err(Error::DetectionFailed {
+         message: String::from("GetAdaptersAddresses failed"),
+         code: Some(result as i32),
+      });
+   }
+
+   let mut iana_interface_types = Vec::new();
+   let mut adapter = buffer.as_ptr();
+
+   while !adapter.is_null() {
+      let adapter_ref = unsafe { &*adapter };
+      iana_interface_types.push(adapter_ref.IfType);
+      adapter = adapter_ref.Next;
+   }
+
+   Ok(iana_interface_types)
+}
+
+fn adapter_buffer(size_in_bytes: u32) -> Vec<IP_ADAPTER_ADDRESSES_LH> {
+   let adapter_count =
+      (size_in_bytes as usize).div_ceil(std::mem::size_of::<IP_ADAPTER_ADDRESSES_LH>());
+
+   vec![IP_ADAPTER_ADDRESSES_LH::default(); adapter_count.max(1)]
+}
+
 #[cfg(test)]
 mod tests {
    use super::*;
@@ -271,5 +373,23 @@ mod tests {
    #[test]
    fn maps_unrecognized_interface_type_to_unknown() {
       assert_eq!(map_iana_interface_type(999), ConnectionType::Unknown);
+   }
+
+   #[test]
+   fn collects_supported_connection_types_from_adapter_interface_types() {
+      assert_eq!(
+         collect_supported_connection_types([
+            IANA_WWANPP,
+            999,
+            IANA_IEEE80211,
+            IANA_WWANPP2,
+            IANA_ETHERNET_CSMACD,
+         ]),
+         vec![
+            ConnectionType::Wifi,
+            ConnectionType::Ethernet,
+            ConnectionType::Cellular,
+         ]
+      );
    }
 }
