@@ -222,6 +222,108 @@ Important enum values used by the plugin:
 | NetworkManager `Metered` | `0`, `2`, `4` | Not metered |
 | ModemManager `RegistrationState` | `5` | Roaming |
 
+## Supported Connection Types
+
+The `supportedConnectionTypes()` API reports physical transport classes present
+on the device, not just the active/default route. The Linux backend first reads
+NetworkManager's realized `Devices` list. If NetworkManager is unavailable, it
+falls back to `/sys/class/net` and filters virtual interfaces.
+
+### NetworkManager Terminal Check
+
+List the realized devices and their NetworkManager `DeviceType` values:
+
+```sh
+nmcli -t -f DEVICE,TYPE,STATE device status
+
+for DEVICE in $(nmcli -t -f DEVICE device status | grep -v '^lo$'); do
+   DEVICE_PATH="$(nmcli -g GENERAL.DBUS-PATH device show "$DEVICE")"
+   DEVICE_TYPE="$(busctl get-property \
+      org.freedesktop.NetworkManager \
+      "$DEVICE_PATH" \
+      org.freedesktop.NetworkManager.Device \
+      DeviceType)"
+
+   printf '%s %s %s\n' "$DEVICE" "$DEVICE_PATH" "$DEVICE_TYPE"
+done
+```
+
+Expected mapping:
+
+| Terminal value | Expected API item |
+| -------------- | ----------------- |
+| `u 1` | `"ethernet"` |
+| `u 2` | `"wifi"` |
+| `u 8` | `"cellular"` |
+
+The API response is deduplicated and ordered as Wi-Fi, Ethernet, Cellular.
+
+Example on a laptop with Wi-Fi and Ethernet hardware:
+
+```json
+["wifi", "ethernet"]
+```
+
+Example on a VM with only a virtualized Ethernet adapter:
+
+```json
+["ethernet"]
+```
+
+Loopback, VPN, bridge, tunnel, and other unknown/virtual device types should not
+appear in the result.
+
+### Sysfs Fallback Terminal Check
+
+To inspect what the fallback can see without NetworkManager:
+
+```sh
+for IFACE_PATH in /sys/class/net/*; do
+   IFACE="$(basename "$IFACE_PATH")"
+
+   if [ "$IFACE" = "lo" ] || readlink -f "$IFACE_PATH" | grep -q '/virtual/'; then
+      continue
+   fi
+
+   printf '%s type=%s wifi_marker=%s wwan_marker=%s\n' \
+      "$IFACE" \
+      "$(cat "$IFACE_PATH/type" 2>/dev/null || true)" \
+      "$(test -d "$IFACE_PATH/wireless" \
+         || test -d "$IFACE_PATH/phy80211" \
+         || test -d "$IFACE_PATH/ieee80211" \
+         || test -d "$IFACE_PATH/device/ieee80211"; echo $?)" \
+      "$(test -d "$IFACE_PATH/wwan" \
+         || test -d "$IFACE_PATH/device/wwan"; echo $?)"
+done
+```
+
+Expected fallback mapping:
+
+   * Wi-Fi marker exit code `0` means `"wifi"`.
+   * WWAN marker exit code `0` means `"cellular"`.
+   * `type=1` with no Wi-Fi or WWAN marker means `"ethernet"`.
+
+### End-To-End Example App Check
+
+Run the example app and press the supported-connection-types refresh control.
+The app should show the same deduplicated classes predicted by the terminal
+commands above.
+
+```sh
+cd examples/tauri-app
+npm run dev
+```
+
+Expected raw response examples:
+
+```json
+["wifi", "ethernet"]
+```
+
+```json
+["ethernet"]
+```
+
 ## WSL2 Fallback Scenarios
 
 Install Ubuntu or another WSL distribution:

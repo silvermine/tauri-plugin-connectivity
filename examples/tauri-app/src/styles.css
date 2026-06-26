@@ -1,7 +1,6 @@
 :root {
    color: #111827;
-   background:
-      radial-gradient(circle at top, #dbeafe 0, #eff6ff 30%, #f8fafc 100%);
+   background-color: #f8fafc;
    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
    line-height: 1.5;
    font-weight: 400;
@@ -25,11 +24,11 @@ body {
 
 .panel {
    width: min(720px, 100%);
-   background-color: rgba(255, 255, 255, 0.92);
-   border: 1px solid rgba(148, 163, 184, 0.35);
-   border-radius: 20px;
+   background-color: #ffffff;
+   border: 1px solid #cbd5e1;
+   border-radius: 8px;
    padding: 28px;
-   box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
 }
 
 h1,
@@ -47,15 +46,15 @@ p {
 
 .status-grid div {
    padding: 16px;
-   border-radius: 14px;
-   background-color: #eff6ff;
-   border: 1px solid #bfdbfe;
+   border-radius: 8px;
+   background-color: #f1f5f9;
+   border: 1px solid #cbd5e1;
 }
 
 dt {
    font-size: 0.85rem;
    font-weight: 700;
-   color: #1d4ed8;
+   color: #0f766e;
 }
 
 dd {
@@ -64,14 +63,44 @@ dd {
    font-weight: 600;
 }
 
+.supported-section {
+   margin: 24px 0;
+}
+
+.supported-list {
+   display: flex;
+   flex-wrap: wrap;
+   gap: 10px;
+   padding: 0;
+   margin: 12px 0 0;
+   list-style: none;
+}
+
+.supported-list li {
+   min-width: 88px;
+   padding: 10px 14px;
+   border-radius: 8px;
+   background-color: #ecfdf5;
+   border: 1px solid #99f6e4;
+   color: #115e59;
+   font-weight: 700;
+   text-align: center;
+}
+
+.supported-list .muted {
+   background-color: #f8fafc;
+   border-color: #cbd5e1;
+   color: #64748b;
+}
+
 button {
    border: 0;
-   border-radius: 999px;
+   border-radius: 8px;
    padding: 12px 20px;
    font: inherit;
    font-weight: 700;
    color: white;
-   background: linear-gradient(135deg, #2563eb, #0891b2);
+   background-color: #0f766e;
    cursor: pointer;
 }
 
@@ -82,7 +111,7 @@ button:hover {
 pre {
    overflow: auto;
    padding: 16px;
-   border-radius: 14px;
+   border-radius: 8px;
    background-color: #0f172a;
    color: #e2e8f0;
 }
@@ -93,7 +122,20 @@ pre {
 }
 
 @media (max-width: 640px) {
+   .page {
+      padding: 16px;
+   }
+
+   .panel {
+      padding: 20px;
+   }
+
    .status-grid {
       grid-template-columns: 1fr;
+      gap: 12px;
+   }
+
+   .supported-list li {
+      flex: 1 1 100%;
    }
 }

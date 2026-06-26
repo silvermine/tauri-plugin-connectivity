@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { connectionStatus, ConnectionStatus } from './index';
+import { connectionStatus, ConnectionStatus, supportedConnectionTypes } from './index';
 
 let lastCmd = '';
 
@@ -107,5 +107,28 @@ describe('connectionStatus', () => {
       mockIPC(() => { throw new Error('unsupported'); });
 
       await expect(connectionStatus()).rejects.toThrow('unsupported');
+   });
+});
+
+describe('supportedConnectionTypes', () => {
+   it('invokes the correct Tauri command', async () => {
+      mockIPC((cmd) => {
+         lastCmd = cmd;
+
+         if (cmd === 'plugin:connectivity|supported_connection_types') {
+            return [ 'wifi', 'ethernet' ];
+         }
+         return undefined;
+      });
+
+      await supportedConnectionTypes();
+
+      expect(lastCmd).toBe('plugin:connectivity|supported_connection_types');
+   });
+
+   it('returns the supported connection types', async () => {
+      mockIPC(() => { return [ 'wifi', 'cellular' ]; });
+
+      await expect(supportedConnectionTypes()).resolves.toEqual([ 'wifi', 'cellular' ]);
    });
 });
