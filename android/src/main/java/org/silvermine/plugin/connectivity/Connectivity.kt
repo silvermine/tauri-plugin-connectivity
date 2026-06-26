@@ -1,14 +1,17 @@
 package org.silvermine.plugin.connectivity
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 
 class Connectivity(context: Context) {
    private val connectivityManager =
       context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+   private val packageManager = context.packageManager
 
    fun connectionStatus(): JSObject {
       val manager = connectivityManager ?: return NativeConnectionStatus.disconnected().toJSObject()
@@ -46,6 +49,39 @@ class Connectivity(context: Context) {
       )
 
       return status.toJSObject()
+   }
+
+   fun supportedConnectionTypes(): JSObject {
+      // Android does not expose a complete public inventory of inactive
+      // removable network hardware. Combine PackageManager's declared system
+      // features with currently tracked ConnectivityManager networks:
+      // https://developer.android.com/reference/android/content/pm/PackageManager
+      // https://developer.android.com/reference/android/net/ConnectivityManager#getAllNetworks()
+      val activeTransportTypes = connectivityManager?.allNetworks
+         ?.mapNotNull { network -> connectivityManager.getNetworkCapabilities(network) }
+         ?.map { capabilities ->
+            AndroidConnectivityMapper.connectionType(
+               capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+               capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET),
+               capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+            )
+         }
+         ?: emptyList()
+      val connectionTypes = AndroidConnectivityMapper.supportedConnectionTypes(
+         hasWifi = packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI),
+         hasEthernet = packageManager.hasSystemFeature(PackageManager.FEATURE_ETHERNET),
+         hasCellular = packageManager.hasSystemFeature(PackageManager.FEATURE_TELEPHONY),
+         activeTransportTypes = activeTransportTypes
+      )
+      val result = JSObject()
+      val serializedTypes = JSArray()
+
+      connectionTypes.forEach { connectionType ->
+         serializedTypes.put(connectionType.serializedName)
+      }
+      result.put("value", serializedTypes)
+
+      return result
    }
 
    private fun isBackgroundRestricted(manager: ConnectivityManager): Boolean {
@@ -140,5 +176,33 @@ object AndroidConnectivityMapper {
       }
 
       return ConnectionType.UNKNOWN
+   }
+
+   fun supportedConnectionTypes(
+      hasWifi: Boolean,
+      hasEthernet: Boolean,
+      hasCellular: Boolean,
+      activeTransportTypes: List<ConnectionType>
+   ): List<ConnectionType> {
+      // Keep the API order stable across platforms and filter UNKNOWN here so
+      // callers can use the result directly for policy-setting UI.
+      val connectionTypes = linkedSetOf<ConnectionType>()
+
+      if (hasWifi) {
+         connectionTypes.add(ConnectionType.WIFI)
+      }
+      if (hasEthernet) {
+         connectionTypes.add(ConnectionType.ETHERNET)
+      }
+      if (hasCellular) {
+         connectionTypes.add(ConnectionType.CELLULAR)
+      }
+
+      activeTransportTypes
+         .filter { connectionType -> connectionType != ConnectionType.UNKNOWN }
+         .forEach { connectionType -> connectionTypes.add(connectionType) }
+
+      return listOf(ConnectionType.WIFI, ConnectionType.ETHERNET, ConnectionType.CELLULAR)
+         .filter { connectionType -> connectionTypes.contains(connectionType) }
    }
 }

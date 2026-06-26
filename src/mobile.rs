@@ -1,8 +1,10 @@
+#[cfg(target_os = "android")]
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use tauri::plugin::{PluginApi, PluginHandle};
 use tauri::{AppHandle, Runtime};
 
-use crate::types::ConnectionStatus;
+use crate::types::{ConnectionStatus, ConnectionType};
 
 #[cfg(target_os = "android")]
 const PLUGIN_IDENTIFIER: &str = "org.silvermine.plugin.connectivity";
@@ -10,6 +12,14 @@ const PLUGIN_IDENTIFIER: &str = "org.silvermine.plugin.connectivity";
 tauri::ios_plugin_binding!(init_plugin_connectivity);
 
 const COMMAND_CONNECTION_STATUS: &str = "connectionStatus";
+#[cfg(target_os = "android")]
+const COMMAND_SUPPORTED_CONNECTION_TYPES: &str = "supportedConnectionTypes";
+
+#[cfg(target_os = "android")]
+#[derive(Debug, Deserialize)]
+struct MobileSupportedConnectionTypes {
+   value: Vec<ConnectionType>,
+}
 
 /// Initializes the Rust-side bridge to the native mobile plugin.
 pub fn init<R: Runtime, C: DeserializeOwned>(
@@ -36,5 +46,22 @@ impl<R: Runtime> Connectivity<R> {
          .0
          .run_mobile_plugin(COMMAND_CONNECTION_STATUS, ())
          .map_err(Into::into)
+   }
+
+   /// Returns the supported physical connection transport classes.
+   pub fn supported_connection_types(&self) -> crate::Result<Vec<ConnectionType>> {
+      #[cfg(target_os = "android")]
+      {
+         let result: MobileSupportedConnectionTypes = self
+            .0
+            .run_mobile_plugin(COMMAND_SUPPORTED_CONNECTION_TYPES, ())
+            .map_err(crate::Error::from)?;
+         Ok(result.value)
+      }
+
+      #[cfg(not(target_os = "android"))]
+      {
+         Err(crate::Error::Unsupported)
+      }
    }
 }
