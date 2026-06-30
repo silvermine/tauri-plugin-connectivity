@@ -173,6 +173,19 @@ class AndroidConnectivityMapperTest {
    }
 
    @Test
+   fun `test that active transports supplement system features`() {
+      assertEquals(
+         listOf(ConnectionType.WIFI, ConnectionType.ETHERNET),
+         AndroidConnectivityMapper.supportedConnectionTypes(
+            hasWifi = true,
+            hasEthernet = false,
+            hasCellular = false,
+            activeTransportTypes = listOf(ConnectionType.ETHERNET)
+         )
+      )
+   }
+
+   @Test
    fun `test that supported connection types exclude unknown`() {
       assertEquals(
          emptyList<ConnectionType>(),
