@@ -200,28 +200,22 @@ fn network_manager_supported_connection_types(
       NETWORK_MANAGER_INTERFACE,
    )?;
    let devices = manager.get_property::<Vec<OwnedObjectPath>>("Devices")?;
-   let mut device_types = Vec::with_capacity(devices.len());
 
-   for device in devices {
-      // DeviceType is the NetworkManager transport enum. Values used below are
-      // from the NetworkManager D-Bus type reference:
-      // https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/nm-dbus-types.html
-      let device_proxy = dbus_proxy(
-         connection,
-         NETWORK_MANAGER_SERVICE,
-         device.as_str(),
-         NETWORK_MANAGER_DEVICE_INTERFACE,
-      )?;
-      let device_type = device_proxy.get_property::<u32>("DeviceType")?;
-      debug!(
-         device = %device.as_str(),
-         device_type,
-         "queried NetworkManager supported device type"
-      );
-      device_types.push(device_type);
-   }
-
-   Ok(collect_supported_connection_types(device_types))
+   Ok(collect_supported_connection_types_from_devices(
+      devices,
+      |device| {
+         // DeviceType is the NetworkManager transport enum. Values used below are
+         // from the NetworkManager D-Bus type reference:
+         // https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/nm-dbus-types.html
+         let device_proxy = dbus_proxy(
+            connection,
+            NETWORK_MANAGER_SERVICE,
+            device.as_str(),
+            NETWORK_MANAGER_DEVICE_INTERFACE,
+         )?;
+         device_proxy.get_property::<u32>("DeviceType")
+      },
+   ))
 }
 
 fn system_bus_connection() -> zbus::Result<Connection> {
@@ -581,6 +575,33 @@ fn collect_supported_connection_types(
    connection_types.into_vec()
 }
 
+fn collect_supported_connection_types_from_devices<E>(
+   devices: impl IntoIterator<Item = OwnedObjectPath>,
+   mut read_device_type: impl FnMut(&OwnedObjectPath) -> std::result::Result<u32, E>,
+) -> Vec<ConnectionType>
+where
+   E: std::fmt::Display,
+{
+   let device_types = devices
+      .into_iter()
+      .filter_map(|device| match read_device_type(&device) {
+         Ok(device_type) => {
+            debug!(
+               device = %device.as_str(),
+               device_type,
+               "queried NetworkManager supported device type"
+            );
+            Some(device_type)
+         }
+         Err(error) => {
+            warn!(%error, device = %device.as_str(), "failed to read NetworkManager device type");
+            None
+         }
+      });
+
+   collect_supported_connection_types(device_types)
+}
+
 fn is_metered(metered: u32) -> bool {
    matches!(metered, NM_METERED_YES | NM_METERED_GUESS_YES)
 }
@@ -823,6 +844,27 @@ mod tests {
             ConnectionType::Ethernet,
             ConnectionType::Cellular,
          ]
+      );
+   }
+
+   #[test]
+   fn skips_network_manager_devices_that_cannot_be_read() {
+      let devices = [
+         OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/Devices/1").unwrap(),
+         OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/Devices/2").unwrap(),
+         OwnedObjectPath::try_from("/org/freedesktop/NetworkManager/Devices/3").unwrap(),
+      ];
+
+      assert_eq!(
+         collect_supported_connection_types_from_devices(devices, |device| {
+            match device.as_str() {
+               "/org/freedesktop/NetworkManager/Devices/1" => Ok(NM_DEVICE_TYPE_ETHERNET),
+               "/org/freedesktop/NetworkManager/Devices/2" => Err("device disappeared"),
+               "/org/freedesktop/NetworkManager/Devices/3" => Ok(NM_DEVICE_TYPE_WIFI),
+               _ => unreachable!(),
+            }
+         }),
+         vec![ConnectionType::Wifi, ConnectionType::Ethernet]
       );
    }
 
