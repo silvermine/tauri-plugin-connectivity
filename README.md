@@ -210,7 +210,7 @@ the device can use rather than the currently preferred connection.
 
 | Platform | Mapping |
 | -------- | ------- |
-| Windows  | Present adapters from Win32 `GetAdaptersAddresses()` mapped by IANA interface type |
+| Windows  | Present hardware-backed adapters from Win32 `GetAdaptersAddresses()` and `GetIfEntry2()` mapped by IANA interface type |
 | Linux    | NetworkManager realized `Devices` mapped by `DeviceType`; sysfs fallback when NetworkManager is unavailable |
 | macOS    | Unsupported for this API |
 | iOS      | Unsupported for this API |
