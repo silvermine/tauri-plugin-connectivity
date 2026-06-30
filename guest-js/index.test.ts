@@ -131,4 +131,16 @@ describe('supportedConnectionTypes', () => {
 
       await expect(supportedConnectionTypes()).resolves.toEqual([ 'wifi', 'cellular' ]);
    });
+
+   it('returns an empty array when no supported connection types are reported', async () => {
+      mockIPC(() => { return []; });
+
+      await expect(supportedConnectionTypes()).resolves.toEqual([]);
+   });
+
+   it('handles errors thrown by the backend', async () => {
+      mockIPC(() => { throw new Error('unsupported'); });
+
+      await expect(supportedConnectionTypes()).rejects.toThrow('unsupported');
+   });
 });
