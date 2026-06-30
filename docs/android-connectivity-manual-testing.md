@@ -15,6 +15,7 @@ when the active network has `NET_CAPABILITY_INTERNET`; networks without
 | Tauri Android prerequisites | <https://v2.tauri.app/start/prerequisites/> |
 | Tauri mobile plugin development | <https://v2.tauri.app/develop/plugins/develop-mobile/> |
 | Android network state guide | <https://developer.android.com/develop/connectivity/network-ops/reading-network-state> |
+| Android `PackageManager` API | <https://developer.android.com/reference/android/content/pm/PackageManager> |
 | `ConnectivityManager` API | <https://developer.android.com/reference/android/net/ConnectivityManager> |
 | `NetworkCapabilities` API | <https://developer.android.com/reference/android/net/NetworkCapabilities> |
 
@@ -31,6 +32,7 @@ when the active network has `NET_CAPABILITY_INTERNET`; networks without
 | Metered Wi-Fi | Tested | `metered: true` if Android marks the network metered |
 | Temporarily not metered network | Not tested | `metered: false` while capability is present |
 | USB-C Ethernet | Not tested | `connectionType: "ethernet"` |
+| Supported transport classes | Tested by terminal inspection | `ConnectionType[]` without `unknown` |
 
 ## Base Test Setup
 
@@ -81,6 +83,7 @@ Use these commands while changing network state:
 ```sh
 adb devices
 adb shell dumpsys connectivity
+adb shell pm list features
 adb shell cmd netpolicy set restrict-background true
 adb shell cmd netpolicy get restrict-background
 adb logcat -s ConnectivityPlugin RustStdoutStderr Tauri
@@ -113,6 +116,82 @@ Reset the policy after testing:
 ```sh
 adb shell cmd netpolicy set restrict-background false
 ```
+
+## Supported Connection Types
+
+The `supportedConnectionTypes()` API reports transport classes the device can
+use. Android does not expose a complete public SDK inventory of inactive
+removable adapters, so the backend combines system features from
+`PackageManager` with currently tracked `ConnectivityManager` networks.
+
+### Terminal Feature Check
+
+Run:
+
+```sh
+adb shell pm list features | grep -E \
+   'android.hardware.wifi|android.hardware.ethernet|android.hardware.telephony'
+```
+
+Expected mapping:
+
+| Terminal feature | Expected API item |
+| ---------------- | ----------------- |
+| `android.hardware.wifi` | `"wifi"` |
+| `android.hardware.ethernet` | `"ethernet"` |
+| `android.hardware.telephony` | `"cellular"` |
+
+Most phones should include Wi-Fi and telephony:
+
+```json
+["wifi", "cellular"]
+```
+
+An Android TV or tablet with Ethernet hardware can include Ethernet:
+
+```json
+["wifi", "ethernet"]
+```
+
+### Terminal Current-Network Check
+
+Inspect Android's currently tracked networks:
+
+```sh
+adb shell dumpsys connectivity | grep -E \
+   'NetworkAgentInfo|Transports:|Capabilities:'
+```
+
+Look for transport labels such as `WIFI`, `ETHERNET`, or `CELLULAR`. These can
+add a transport class when Android exposes an attached adapter as a current
+network even if that transport is not listed as a system feature.
+
+### End-To-End Example App Check
+
+Run the example app and press the supported-connection-types refresh control:
+
+```sh
+cd examples/tauri-app
+npm run tauri android dev
+```
+
+The raw response should be a deduplicated array without `"unknown"`, ordered as
+Wi-Fi, Ethernet, Cellular.
+
+Expected phone example:
+
+```json
+["wifi", "cellular"]
+```
+
+Expected phone with USB-C Ethernet attached and visible to Android:
+
+```json
+["wifi", "ethernet", "cellular"]
+```
+
+If Android does not expose an inactive removable adapter through system features
+or current networks, it will not appear until Android reports it.
 
 ## Manual Scenarios
 

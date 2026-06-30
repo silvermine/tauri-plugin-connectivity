@@ -15,6 +15,7 @@ decisions.
 ## Features
 
    * Detect connection type (WiFi, Ethernet, Cellular)
+   * Query supported physical transport classes for policy settings
    * Query metered and constrained status for network policy decisions
    * Check internet reachability
    * Cross-platform support (Windows, Linux, macOS, iOS, Android)
@@ -155,6 +156,22 @@ async function shouldDownload(): Promise<boolean> {
 }
 ```
 
+#### Query supported transport classes
+
+Use `supportedConnectionTypes()` when the app needs to show policy settings for
+transport classes the device can use, even when that transport is not currently
+active:
+
+```ts
+import { supportedConnectionTypes } from '@silvermine/tauri-plugin-connectivity';
+
+async function showPolicyOptions() {
+   const supportedTypes = await supportedConnectionTypes();
+
+   console.debug(`Supported transports: ${supportedTypes.join(', ')}`);
+}
+```
+
 #### Use from Rust
 
 Access the connectivity API from any Tauri manager type via the
@@ -184,6 +201,24 @@ The `connectionStatus()` function returns a `ConnectionStatus` object:
 | `metered`        | `boolean`        | Whether data usage is billed or limited                           |
 | `constrained`    | `boolean`        | Whether the connection is data-constrained or restricted          |
 | `connectionType` | `ConnectionType` | The physical transport: `wifi`, `ethernet`, `cellular`, `unknown` |
+
+### Supported Connection Types
+
+The `supportedConnectionTypes()` function returns `ConnectionType[]`. The array
+is deduplicated, excludes `unknown`, and represents physical transport classes
+the device can use rather than the currently preferred connection.
+
+| Platform | Mapping |
+| -------- | ------- |
+| Windows  | Present hardware-backed adapters from Win32 `GetAdaptersAddresses()` and `GetIfEntry2()` mapped by IANA interface type |
+| Linux    | NetworkManager realized `Devices` mapped by `DeviceType`; sysfs fallback when NetworkManager is unavailable |
+| macOS    | Unsupported for this API |
+| iOS      | Unsupported for this API |
+| Android  | `PackageManager` hardware features plus current `ConnectivityManager` networks |
+
+Android does not expose a complete public SDK inventory of inactive removable
+network adapters. Removable transports that are not declared as system features
+may appear only after Android exposes them through `ConnectivityManager`.
 
 #### Platform mapping
 

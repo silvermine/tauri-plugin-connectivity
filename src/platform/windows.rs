@@ -2,9 +2,16 @@ use tracing::{debug, warn};
 use windows::Networking::Connectivity::{
    ConnectionCost, ConnectionProfile, NetworkConnectivityLevel, NetworkCostType, NetworkInformation,
 };
+use windows::Win32::Foundation::{ERROR_BUFFER_OVERFLOW, NO_ERROR};
+use windows::Win32::NetworkManagement::IpHelper::{
+   GAA_FLAG_INCLUDE_ALL_INTERFACES, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER,
+   GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_UNICAST, GetAdaptersAddresses, GetIfEntry2,
+   IP_ADAPTER_ADDRESSES_LH, MIB_IF_ROW2,
+};
+use windows::Win32::Networking::WinSock::AF_UNSPEC;
 
-use crate::error::Result;
-use crate::types::{ConnectionStatus, ConnectionType};
+use crate::error::{Error, Result};
+use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
 
 /// [`IanaInterfaceType`](https://www.iana.org/assignments/ianaiftype-mib/ianaiftype-mib) values.
 /// IANA interface type for Ethernet-like interfaces (`ethernetCsmacd`).
@@ -14,6 +21,13 @@ const IANA_IEEE80211: u32 = 71;
 /// IANA interface types for WWAN mobile broadband transports.
 const IANA_WWANPP: u32 = 243;
 const IANA_WWANPP2: u32 = 244;
+
+const INITIAL_ADAPTER_BUFFER_SIZE: u32 = 15 * 1024;
+const MAX_ADAPTER_QUERY_ATTEMPTS: usize = 3;
+
+// `MIB_IF_ROW2.InterfaceAndOperStatusFlags` stores `HardwareInterface`
+// in its least-significant bit.
+const HARDWARE_INTERFACE_FLAG: u8 = 1;
 
 /// Returns the current network connection status using WinRT
 /// [`NetworkInformation`](https://learn.microsoft.com/en-us/uwp/api/windows.networking.connectivity.networkinformation?view=winrt-28000).
@@ -86,6 +100,21 @@ pub fn connection_status() -> Result<ConnectionStatus> {
    );
 
    Ok(status)
+}
+
+/// Returns the supported physical connection transport classes.
+pub fn supported_connection_types() -> Result<Vec<ConnectionType>> {
+   debug!("querying Windows supported connection types");
+
+   // Use Win32 adapter enumeration rather than WinRT connection profiles:
+   // `GetAdaptersAddresses` returns adapters present on the local computer,
+   // while `NetworkInformation::GetConnectionProfiles()` can include saved
+   // profiles that are not current hardware. The API and buffer contract are
+   // documented here:
+   // https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getadaptersaddresses
+   Ok(collect_supported_connection_types_from_adapters(
+      adapter_interface_types()?,
+   ))
 }
 
 /// The WinRT binding can return a success-coded error when the API succeeds but
@@ -188,6 +217,127 @@ fn map_iana_interface_type(iana_interface_type: u32) -> ConnectionType {
    }
 }
 
+fn collect_supported_connection_types(
+   iana_interface_types: impl IntoIterator<Item = u32>,
+) -> Vec<ConnectionType> {
+   let mut connection_types = ConnectionTypes::new();
+
+   for iana_interface_type in iana_interface_types {
+      connection_types.insert(map_iana_interface_type(iana_interface_type));
+   }
+
+   connection_types.into_vec()
+}
+
+fn collect_supported_connection_types_from_adapters(
+   adapters: impl IntoIterator<Item = (u32, bool)>,
+) -> Vec<ConnectionType> {
+   collect_supported_connection_types(
+      adapters
+         .into_iter()
+         .filter_map(|(iana_interface_type, is_hardware)| {
+            is_hardware.then_some(iana_interface_type)
+         }),
+   )
+}
+
+fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
+   // Microsoft recommends a 15 KB initial buffer to avoid repeated allocation
+   // for typical adapter lists. If the buffer is still too small, retry with
+   // the required size up to the three attempts used in Microsoft's example.
+   // https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getadaptersaddresses
+   let (buffer, result) = query_adapter_buffer(|buffer, size| unsafe {
+      // `GAA_FLAG_INCLUDE_ALL_INTERFACES` includes adapters regardless of
+      // operational state, matching the supported-hardware contract. The skip
+      // flags avoid populating address lists we do not inspect.
+      // https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getadaptersaddresses
+      GetAdaptersAddresses(
+         AF_UNSPEC.0.into(),
+         GAA_FLAG_INCLUDE_ALL_INTERFACES
+            | GAA_FLAG_SKIP_UNICAST
+            | GAA_FLAG_SKIP_ANYCAST
+            | GAA_FLAG_SKIP_MULTICAST
+            | GAA_FLAG_SKIP_DNS_SERVER,
+         None,
+         Some(buffer),
+         size,
+      )
+   });
+
+   if result != NO_ERROR.0 {
+      return Err(Error::DetectionFailed {
+         message: String::from("GetAdaptersAddresses failed"),
+         code: Some(result as i32),
+      });
+   }
+
+   let mut adapters = Vec::new();
+   let mut adapter = buffer.as_ptr();
+
+   while !adapter.is_null() {
+      let adapter_ref = unsafe { &*adapter };
+
+      // IANA interface types alone do not distinguish a physical Ethernet
+      // adapter from Ethernet-like virtual adapters. Query the interface row
+      // by LUID and keep only interfaces Windows identifies as hardware-backed:
+      // https://learn.microsoft.com/en-us/windows/win32/api/netioapi/ns-netioapi-mib_if_row2
+      let mut interface = MIB_IF_ROW2 {
+         InterfaceLuid: adapter_ref.Luid,
+         ..MIB_IF_ROW2::default()
+      };
+      let interface_result = unsafe { GetIfEntry2(&mut interface) };
+
+      if interface_result != NO_ERROR {
+         warn!(
+            code = interface_result.0,
+            iana_interface_type = adapter_ref.IfType,
+            "failed to query Windows adapter hardware status; skipping adapter"
+         );
+         adapter = adapter_ref.Next;
+         continue;
+      }
+
+      let is_hardware =
+         interface.InterfaceAndOperStatusFlags._bitfield & HARDWARE_INTERFACE_FLAG != 0;
+
+      if !is_hardware {
+         debug!(
+            iana_interface_type = adapter_ref.IfType,
+            "skipping virtual Windows network adapter"
+         );
+      }
+
+      adapters.push((adapter_ref.IfType, is_hardware));
+      adapter = adapter_ref.Next;
+   }
+
+   Ok(adapters)
+}
+
+fn query_adapter_buffer(
+   mut query: impl FnMut(*mut IP_ADAPTER_ADDRESSES_LH, &mut u32) -> u32,
+) -> (Vec<IP_ADAPTER_ADDRESSES_LH>, u32) {
+   let mut size = INITIAL_ADAPTER_BUFFER_SIZE;
+
+   for attempt in 0..MAX_ADAPTER_QUERY_ATTEMPTS {
+      let mut buffer = adapter_buffer(size);
+      let result = query(buffer.as_mut_ptr(), &mut size);
+
+      if result != ERROR_BUFFER_OVERFLOW.0 || attempt + 1 == MAX_ADAPTER_QUERY_ATTEMPTS {
+         return (buffer, result);
+      }
+   }
+
+   unreachable!("adapter query attempt limit is nonzero")
+}
+
+fn adapter_buffer(size_in_bytes: u32) -> Vec<IP_ADAPTER_ADDRESSES_LH> {
+   let adapter_count =
+      (size_in_bytes as usize).div_ceil(std::mem::size_of::<IP_ADAPTER_ADDRESSES_LH>());
+
+   vec![IP_ADAPTER_ADDRESSES_LH::default(); adapter_count.max(1)]
+}
+
 #[cfg(test)]
 mod tests {
    use super::*;
@@ -271,5 +421,67 @@ mod tests {
    #[test]
    fn maps_unrecognized_interface_type_to_unknown() {
       assert_eq!(map_iana_interface_type(999), ConnectionType::Unknown);
+   }
+
+   #[test]
+   fn collects_supported_connection_types_from_adapter_interface_types() {
+      assert_eq!(
+         collect_supported_connection_types([
+            IANA_WWANPP,
+            999,
+            IANA_IEEE80211,
+            IANA_WWANPP2,
+            IANA_ETHERNET_CSMACD,
+         ]),
+         vec![
+            ConnectionType::Wifi,
+            ConnectionType::Ethernet,
+            ConnectionType::Cellular,
+         ]
+      );
+   }
+
+   #[test]
+   fn excludes_virtual_adapters_from_supported_connection_types() {
+      assert_eq!(
+         collect_supported_connection_types_from_adapters([
+            (IANA_IEEE80211, true),
+            (IANA_ETHERNET_CSMACD, false),
+         ]),
+         vec![ConnectionType::Wifi]
+      );
+   }
+
+   #[test]
+   fn retries_adapter_query_until_the_third_attempt_succeeds() {
+      let mut attempts = 0;
+
+      let (_, result) = query_adapter_buffer(|_, size| {
+         attempts += 1;
+
+         if attempts < 3 {
+            *size += 1024;
+            ERROR_BUFFER_OVERFLOW.0
+         } else {
+            NO_ERROR.0
+         }
+      });
+
+      assert_eq!(result, NO_ERROR.0);
+      assert_eq!(attempts, 3);
+   }
+
+   #[test]
+   fn stops_retrying_adapter_query_after_three_overflows() {
+      let mut attempts = 0;
+
+      let (_, result) = query_adapter_buffer(|_, size| {
+         attempts += 1;
+         *size += 1024;
+         ERROR_BUFFER_OVERFLOW.0
+      });
+
+      assert_eq!(result, ERROR_BUFFER_OVERFLOW.0);
+      assert_eq!(attempts, 3);
    }
 }

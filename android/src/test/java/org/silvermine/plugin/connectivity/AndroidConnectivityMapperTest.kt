@@ -153,4 +153,48 @@ class AndroidConnectivityMapperTest {
          )
       )
    }
+
+   @Test
+   fun `test that supported connection types are deduped and ordered`() {
+      assertEquals(
+         listOf(ConnectionType.WIFI, ConnectionType.ETHERNET, ConnectionType.CELLULAR),
+         AndroidConnectivityMapper.supportedConnectionTypes(
+            hasWifi = true,
+            hasEthernet = true,
+            hasCellular = true,
+            activeTransportTypes = listOf(
+               ConnectionType.CELLULAR,
+               ConnectionType.UNKNOWN,
+               ConnectionType.WIFI,
+               ConnectionType.CELLULAR
+            )
+         )
+      )
+   }
+
+   @Test
+   fun `test that active transports supplement system features`() {
+      assertEquals(
+         listOf(ConnectionType.WIFI, ConnectionType.ETHERNET),
+         AndroidConnectivityMapper.supportedConnectionTypes(
+            hasWifi = true,
+            hasEthernet = false,
+            hasCellular = false,
+            activeTransportTypes = listOf(ConnectionType.ETHERNET)
+         )
+      )
+   }
+
+   @Test
+   fun `test that supported connection types exclude unknown`() {
+      assertEquals(
+         emptyList<ConnectionType>(),
+         AndroidConnectivityMapper.supportedConnectionTypes(
+            hasWifi = false,
+            hasEthernet = false,
+            hasCellular = false,
+            activeTransportTypes = listOf(ConnectionType.UNKNOWN)
+         )
+      )
+   }
 }
