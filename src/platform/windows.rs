@@ -22,6 +22,9 @@ const IANA_IEEE80211: u32 = 71;
 const IANA_WWANPP: u32 = 243;
 const IANA_WWANPP2: u32 = 244;
 
+const INITIAL_ADAPTER_BUFFER_SIZE: u32 = 15 * 1024;
+const MAX_ADAPTER_QUERY_ATTEMPTS: usize = 3;
+
 // `MIB_IF_ROW2.InterfaceAndOperStatusFlags` stores `HardwareInterface`
 // in its least-significant bit.
 const HARDWARE_INTERFACE_FLAG: u8 = 1;
@@ -240,13 +243,10 @@ fn collect_supported_connection_types_from_adapters(
 
 fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
    // Microsoft recommends a 15 KB initial buffer to avoid repeated allocation
-   // for typical adapter lists. If the buffer is still too small,
-   // `ERROR_BUFFER_OVERFLOW` returns the required size.
+   // for typical adapter lists. If the buffer is still too small, retry with
+   // the required size up to the three attempts used in Microsoft's example.
    // https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-getadaptersaddresses
-   let mut size = 15 * 1024;
-   let mut buffer = adapter_buffer(size);
-
-   let mut result = unsafe {
+   let (buffer, result) = query_adapter_buffer(|buffer, size| unsafe {
       // `GAA_FLAG_INCLUDE_ALL_INTERFACES` includes adapters regardless of
       // operational state, matching the supported-hardware contract. The skip
       // flags avoid populating address lists we do not inspect.
@@ -259,27 +259,10 @@ fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
             | GAA_FLAG_SKIP_MULTICAST
             | GAA_FLAG_SKIP_DNS_SERVER,
          None,
-         Some(buffer.as_mut_ptr()),
-         &mut size,
+         Some(buffer),
+         size,
       )
-   };
-
-   if result == ERROR_BUFFER_OVERFLOW.0 {
-      buffer = adapter_buffer(size);
-      result = unsafe {
-         GetAdaptersAddresses(
-            AF_UNSPEC.0.into(),
-            GAA_FLAG_INCLUDE_ALL_INTERFACES
-               | GAA_FLAG_SKIP_UNICAST
-               | GAA_FLAG_SKIP_ANYCAST
-               | GAA_FLAG_SKIP_MULTICAST
-               | GAA_FLAG_SKIP_DNS_SERVER,
-            None,
-            Some(buffer.as_mut_ptr()),
-            &mut size,
-         )
-      };
-   }
+   });
 
    if result != NO_ERROR.0 {
       return Err(Error::DetectionFailed {
@@ -329,6 +312,23 @@ fn adapter_interface_types() -> Result<Vec<(u32, bool)>> {
    }
 
    Ok(adapters)
+}
+
+fn query_adapter_buffer(
+   mut query: impl FnMut(*mut IP_ADAPTER_ADDRESSES_LH, &mut u32) -> u32,
+) -> (Vec<IP_ADAPTER_ADDRESSES_LH>, u32) {
+   let mut size = INITIAL_ADAPTER_BUFFER_SIZE;
+
+   for attempt in 0..MAX_ADAPTER_QUERY_ATTEMPTS {
+      let mut buffer = adapter_buffer(size);
+      let result = query(buffer.as_mut_ptr(), &mut size);
+
+      if result != ERROR_BUFFER_OVERFLOW.0 || attempt + 1 == MAX_ADAPTER_QUERY_ATTEMPTS {
+         return (buffer, result);
+      }
+   }
+
+   unreachable!("adapter query attempt limit is nonzero")
 }
 
 fn adapter_buffer(size_in_bytes: u32) -> Vec<IP_ADAPTER_ADDRESSES_LH> {
@@ -450,5 +450,38 @@ mod tests {
          ]),
          vec![ConnectionType::Wifi]
       );
+   }
+
+   #[test]
+   fn retries_adapter_query_until_the_third_attempt_succeeds() {
+      let mut attempts = 0;
+
+      let (_, result) = query_adapter_buffer(|_, size| {
+         attempts += 1;
+
+         if attempts < 3 {
+            *size += 1024;
+            ERROR_BUFFER_OVERFLOW.0
+         } else {
+            NO_ERROR.0
+         }
+      });
+
+      assert_eq!(result, NO_ERROR.0);
+      assert_eq!(attempts, 3);
+   }
+
+   #[test]
+   fn stops_retrying_adapter_query_after_three_overflows() {
+      let mut attempts = 0;
+
+      let (_, result) = query_adapter_buffer(|_, size| {
+         attempts += 1;
+         *size += 1024;
+         ERROR_BUFFER_OVERFLOW.0
+      });
+
+      assert_eq!(result, ERROR_BUFFER_OVERFLOW.0);
+      assert_eq!(attempts, 3);
    }
 }
