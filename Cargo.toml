@@ -5,7 +5,7 @@ exclude = ["examples"]
 
 [package]
 name = "tauri-plugin-connectivity"
-version = "0.1.0"
+version = "0.2.0"
 description = "Network connectivity monitoring plugin for Tauri applications"
 license = "MIT"
 edition = "2024"
@@ -16,8 +16,8 @@ exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules"]
 [dependencies]
 connectivity = { path = "crates/connectivity" }
 serde = { version = "1.0.228", features = ["derive"] }
-tauri = { version = "2.9.3" }
+tauri = { version = "2.12.0" }
 tracing = { version = "0.1.41", default-features = false, features = ["std", "log"] }
 
 [build-dependencies]
-tauri-plugin = { version = "2.5.1", features = ["build"] }
+tauri-plugin = { version = "2.7.1", features = ["build"] }

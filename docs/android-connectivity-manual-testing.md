@@ -18,6 +18,18 @@ when the active network has `NET_CAPABILITY_INTERNET`; networks without
 | Android `PackageManager` API | <https://developer.android.com/reference/android/content/pm/PackageManager> |
 | `ConnectivityManager` API | <https://developer.android.com/reference/android/net/ConnectivityManager> |
 | `NetworkCapabilities` API | <https://developer.android.com/reference/android/net/NetworkCapabilities> |
+| Android 17 behaviour changes | <https://developer.android.com/about/versions/17/behavior-changes-17> |
+
+## Toolchain
+
+| Component | Minimum for this plugin |
+| --------- | ----------------------- |
+| JDK | 17 |
+| Gradle (standalone `android/`) | 9.6.1 (wrapper) |
+| AGP | 9.3.1 (standalone `settings.gradle`) |
+| Kotlin Gradle Plugin | 2.2.10 default in `android/settings.gradle` (override with `-PkotlinVersion=…`; not matrix-tested in CI) |
+| `compileSdk` | 37 |
+| Host app Gradle (Tauri 2.12 template) | 8.13+ |
 
 ## Scenario Coverage
 
@@ -33,6 +45,23 @@ when the active network has `NET_CAPABILITY_INTERNET`; networks without
 | Temporarily not metered network | Not tested | `metered: false` while capability is present |
 | USB-C Ethernet | Not tested | `connectionType: "ethernet"` |
 | Supported transport classes | Tested by terminal inspection | `ConnectionType[]` without `unknown` |
+| Android 17 (API 37) device or emulator | Not tested in CI | Same fields as API 36; re-run Wi-Fi, cellular, Data Saver, metered |
+
+## Pre-release checklist (0.2.0)
+
+Before publishing **0.2.0**, run the **Android 17 (API 37)** scenario on a device or
+emulator and set the scenario table **Status** to `Tested` when complete. CI compiles
+with `compileSdk` 37 but does not execute on-device checks.
+
+## Android 17 / SDK 37 review
+
+Reviewed `Connectivity.kt` against the Android 17 behaviour-change list. No
+plugin code changes were required: connectivity still uses
+`ConnectivityManager.activeNetwork`, `getNetworkCapabilities`, and
+`PackageManager` system features. `ConnectivityManager.allNetworks` remains
+available but is deprecated at compile time with SDK 37; behaviour is unchanged
+for supplementing supported transports. `restrictBackgroundStatus` and
+`NET_CAPABILITY_TEMPORARILY_NOT_METERED` are unchanged on API 37.
 
 ## Base Test Setup
 

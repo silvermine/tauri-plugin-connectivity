@@ -89,7 +89,7 @@ impl<R: Runtime, T: Manager<R>> ConnectivityExt<R> for T {
 /// ```no_run
 /// tauri::Builder::default()
 ///    .plugin(tauri_plugin_connectivity::init())
-///    .run(tauri::generate_context!())
+///    .run(tauri::generate_context!("examples/tauri-app/src-tauri/tauri.conf.json"))
 ///    .expect("error while running tauri application");
 /// ```
 pub fn init<R: Runtime>() -> TauriPlugin<R> {

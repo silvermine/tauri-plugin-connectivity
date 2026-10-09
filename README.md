@@ -4,6 +4,8 @@
 
 Cross-platform network connectivity detection for Tauri 2.x apps.
 
+**0.2.0+** requires **Tauri 2.12** or newer (`@tauri-apps/api` `^2.12.0`).
+
 This plugin provides a unified API for querying network connection status,
 including connection type (WiFi, Ethernet, Cellular), metered/constrained
 flags, and reachability. It is designed to help apps make network policy
@@ -91,12 +93,25 @@ toolchain):
 swift test --package-path ios/ConnectivityCore
 ```
 
-Run the Kotlin tests for the Android connectivity mapper (requires a JDK 17+ and
-the Android SDK):
+Run the Kotlin tests for the Android connectivity mapper (requires JDK 17+,
+Gradle 9.6+ via the repo wrapper, and the Android SDK):
 
 ```bash
 cd android && ./gradlew :lib:test
 ```
+
+To compile the full Android plugin module (AGP 9.3, `compileSdk` 37), populate
+`android/.tauri/tauri-api` first by building the crate for Android (see
+[Tauri mobile plugin development](https://v2.tauri.app/develop/plugins/develop-mobile/)),
+then run `./gradlew assembleDebug` from `android/`. CI runs the same flow with
+`-PembeddedHostPluginBuild` to compile the host-embedded plugin layout (see
+`.github/workflows/ci.yml`). Host apps on the Tauri 2.12 template need Gradle
+8.13+ for the Kotlin `compilerOptions` DSL.
+
+Before releasing a version that bumps `compileSdk`, complete the **Android 17
+(API 37)** row in
+[Android Connectivity Manual Testing](docs/android-connectivity-manual-testing.md)
+on a device or emulator (not run in CI).
 
 The Swift and Kotlin tests cover the platform mapping logic, which lives in
 modules that do not depend on the Tauri mobile APIs
