@@ -1,0 +1,73 @@
+name: Rust
+
+on:
+   workflow_call:
+      inputs:
+         runner:
+            type: string
+            default: ubuntu-24.04
+         timeout-minutes:
+            type: number
+            default: 30
+         clippy-args:
+            description: Space-separated Cargo arguments before the rustc arguments.
+            type: string
+            default: --workspace --all-targets --all-features
+         test-args:
+            description: Space-separated cargo test arguments; wildcards remain literal.
+            type: string
+            default: --workspace --lib
+         linux-packages:
+            description: Space-separated system packages needed by the Linux build.
+            type: string
+            default: libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+
+permissions:
+   contents: read
+
+env:
+   CARGO_TERM_COLOR: always
+
+defaults:
+   run:
+      shell: bash
+
+jobs:
+   rust:
+      name: Lint and tests
+      runs-on: ${{ inputs.runner }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      steps:
+         - name: Checkout repository
+           uses: actions/checkout@v4
+
+         - name: Install Linux system dependencies
+           if: runner.os == 'Linux' && inputs.linux-packages != ''
+           timeout-minutes: 10
+           env:
+              LINUX_PACKAGES: ${{ inputs.linux-packages }}
+           run: |
+              read -r -a packages <<< "$LINUX_PACKAGES"
+              apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+              sudo apt-get "${apt_options[@]}" update
+              sudo apt-get "${apt_options[@]}" install -y --no-install-recommends "${packages[@]}"
+
+         - name: Setup Rust
+           uses: ./.github/actions/setup-rust
+           with:
+              components: clippy
+
+         - name: Run Clippy
+           env:
+              CARGO_ARGS: ${{ inputs.clippy-args }}
+           run: |
+              read -r -a cargo_args <<< "$CARGO_ARGS"
+              cargo clippy --locked "${cargo_args[@]}" -- -D warnings
+
+         - name: Run Rust tests
+           if: ${{ !cancelled() }}
+           env:
+              CARGO_ARGS: ${{ inputs.test-args }}
+           run: |
+              read -r -a cargo_args <<< "$CARGO_ARGS"
+              cargo test --locked "${cargo_args[@]}"

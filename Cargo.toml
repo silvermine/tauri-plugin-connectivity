@@ -14,7 +14,7 @@ links = "tauri-plugin-connectivity"
 exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules"]
 
 [dependencies]
-connectivity = { path = "crates/connectivity" }
+connectivity = { version = "0.1.0", path = "crates/connectivity" }
 serde = { version = "1.0.228", features = ["derive"] }
 tauri = { version = "2.12.0" }
 tracing = { version = "0.1.41", default-features = false, features = ["std", "log"] }

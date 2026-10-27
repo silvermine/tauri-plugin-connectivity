@@ -1,0 +1,47 @@
+name: Dependencies
+
+on:
+   schedule:
+      - cron: '23 6 * * 1'
+   workflow_dispatch:
+   workflow_call:
+      inputs:
+         timeout-minutes:
+            type: number
+            default: 15
+
+permissions:
+   contents: read
+
+defaults:
+   run:
+      shell: bash
+
+concurrency:
+   group: dependency-policy-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+   cancel-in-progress: true
+
+jobs:
+   dependencies:
+      name: Rust Dependency Policy
+      runs-on: ubuntu-24.04
+      timeout-minutes: ${{ inputs.timeout-minutes || 15 }}
+      steps:
+         - name: Checkout repository
+           uses: actions/checkout@v4
+
+         - name: Read project Rust version
+           id: rust
+           run: |
+              python3 - <<'PY' >> "$GITHUB_OUTPUT"
+              import tomllib
+              with open('Cargo.toml', 'rb') as manifest:
+                  print('version=' + tomllib.load(manifest)['package']['rust-version'])
+              PY
+
+         - name: Check Rust dependencies
+           uses: EmbarkStudios/cargo-deny-action@v2
+           with:
+              rust-version: ${{ steps.rust.outputs.version }}
+              arguments: --workspace --all-features --locked
+              command: check

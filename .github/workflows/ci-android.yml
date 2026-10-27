@@ -1,0 +1,107 @@
+name: Android
+
+on:
+   workflow_call:
+      inputs:
+         package:
+            description: Rust plugin package that generates the Tauri Android API scaffolding.
+            required: true
+            type: string
+         runner:
+            description: Linux x86_64 runner with Android SDK support.
+            type: string
+            default: ubuntu-24.04
+         timeout-minutes:
+            type: number
+            default: 45
+         java-version:
+            type: string
+            default: '17'
+         sdk-packages:
+            description: Android SDK packages required by the project; the NDK is added separately.
+            required: true
+            type: string
+         ndk-version:
+            type: string
+            default: '29.0.14206865'
+         rust-target:
+            type: string
+            default: aarch64-linux-android
+         min-sdk:
+            type: number
+            default: 24
+         test-args:
+            description: Space-separated Gradle JVM test tasks; empty if the project has none.
+            type: string
+            default: ''
+         build-args:
+            description: Space-separated Gradle build tasks and options.
+            type: string
+            default: assembleDebug
+
+permissions:
+   contents: read
+
+env:
+   CARGO_TERM_COLOR: always
+
+defaults:
+   run:
+      shell: bash
+
+jobs:
+   android:
+      name: Native tests and plugin build
+      runs-on: ${{ inputs.runner }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      steps:
+         - name: Checkout repository
+           uses: actions/checkout@v4
+
+         - name: Setup Android
+           uses: ./.github/actions/setup-android
+           with:
+              java-version: ${{ inputs.java-version }}
+              sdk-packages: ${{ inputs.sdk-packages }}
+              ndk-version: ${{ inputs.ndk-version }}
+              rust-target: ${{ inputs.rust-target }}
+              min-sdk: ${{ inputs.min-sdk }}
+
+         - name: Setup Rust
+           uses: ./.github/actions/setup-rust
+           with:
+              target: ${{ inputs.rust-target }}
+
+         - name: Run Kotlin tests
+           if: inputs.test-args != ''
+           working-directory: android
+           env:
+              GRADLE_ARGS: ${{ inputs.test-args }}
+           run: |
+              read -r -a gradle_args <<< "$GRADLE_ARGS"
+              ./gradlew "${gradle_args[@]}"
+
+         - name: Build Rust plugin and Tauri API scaffolding
+           env:
+              PLUGIN_PACKAGE: ${{ inputs.package }}
+              RUST_TARGET: ${{ inputs.rust-target }}
+           run: cargo build --locked -p "$PLUGIN_PACKAGE" --target "$RUST_TARGET"
+
+         - name: Assemble plugin AAR
+           working-directory: android
+           env:
+              GRADLE_ARGS: ${{ inputs.build-args }}
+           run: |
+              read -r -a gradle_args <<< "$GRADLE_ARGS"
+              ./gradlew "${gradle_args[@]}"
+
+         - name: Upload Android reports on failure
+           if: failure()
+           uses: actions/upload-artifact@v4
+           with:
+              name: android-reports
+              path: |
+                 android/**/build/reports/
+                 android/**/build/test-results/
+              if-no-files-found: ignore
+              retention-days: 7

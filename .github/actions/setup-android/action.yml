@@ -1,0 +1,66 @@
+name: Setup project Android
+description: Install Java, SDK/NDK, and compiler settings on a Linux x86_64 runner.
+
+inputs:
+   java-version:
+      description: JDK used by Gradle.
+      default: '17'
+   sdk-packages:
+      description: Space-separated Android SDK packages; the NDK is added separately.
+      required: true
+   ndk-version:
+      description: Android NDK version.
+      default: '29.0.14206865'
+   rust-target:
+      description: Target whose compiler and linker settings should be exported.
+      default: aarch64-linux-android
+   min-sdk:
+      description: Android API level used by the NDK compiler.
+      default: '24'
+
+runs:
+   using: composite
+   steps:
+      - name: Require a Linux x86_64 runner
+        shell: bash
+        run: |
+           if [[ "$RUNNER_OS" != 'Linux' || "$RUNNER_ARCH" != 'X64' ]]; then
+              echo 'Android setup requires a Linux x86_64 runner' >&2
+              exit 1
+           fi
+
+      - name: Setup Java and Gradle cache
+        uses: actions/setup-java@v4
+        with:
+           distribution: temurin
+           java-version: ${{ inputs.java-version }}
+           cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+           packages: ${{ inputs.sdk-packages }} ndk;${{ inputs.ndk-version }}
+
+      - name: Export NDK toolchain
+        shell: bash
+        env:
+           NDK_VERSION: ${{ inputs.ndk-version }}
+           RUST_TARGET: ${{ inputs.rust-target }}
+           MIN_SDK: ${{ inputs.min-sdk }}
+        run: |
+           ndk_dir="$ANDROID_HOME/ndk/$NDK_VERSION"
+           ndk_bin="$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin"
+           case "$RUST_TARGET" in
+              aarch64-linux-android|x86_64-linux-android|i686-linux-android)
+                 compiler_target="$RUST_TARGET" ;;
+              armv7-linux-androideabi)
+                 compiler_target='armv7a-linux-androideabi' ;;
+              *) echo "Unsupported Android target: $RUST_TARGET" >&2; exit 1 ;;
+           esac
+           target_key="${RUST_TARGET//-/_}"
+           {
+              echo "NDK_HOME=$ndk_dir"
+              echo "CC_$target_key=$ndk_bin/$compiler_target$MIN_SDK-clang"
+              echo "AR_$target_key=$ndk_bin/llvm-ar"
+              echo "CARGO_TARGET_${target_key^^}_LINKER=$ndk_bin/$compiler_target$MIN_SDK-clang"
+           } >> "$GITHUB_ENV"

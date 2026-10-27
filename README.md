@@ -343,6 +343,111 @@ guidelines. Key standards include:
 npm run standards
 ```
 
+### Continuous Integration
+
+[CI](.github/workflows/ci.yml) selects the project's jobs and calls local reusable
+workflows with `workflow_call`. Each job has an explicit timeout and read-only
+repository permissions. New commits cancel older runs for the same branch or PR.
+Linux package setup also has a ten-minute step limit and bounded network retries.
+
+| Job | Checks | Default timeout |
+| --- | --- | --- |
+| Checks | Workflow lint, JavaScript standards/tests, Rust format, commitlint | 10 min |
+| Rust | Workspace Clippy and tests on Linux, Windows, and macOS | 30 min |
+| Android | Kotlin tests, Rust plugin build, Tauri API scaffolding, AAR | 45 min |
+| iOS | Swift core tests and scoped Rust cross-compilation | 30 min |
+| Continuous Integration | Requires every CI job to succeed | 5 min |
+| Rust Dependency Policy | Advisories, licenses, bans, and sources | 15 min |
+
+The aggregate `Continuous Integration` check fails when a required job fails, is
+cancelled, or is skipped, including dependency policy. Pushes and PRs invoke the
+policy from CI. Its separate scheduled/manual entry point runs only the policy,
+without starting platform jobs or duplicating the push/PR check.
+
+Setup reads Node.js from `.nvmrc`, npm from `package.json`'s `packageManager`, and
+Rust from the root `Cargo.toml`'s `rust-version`. The Rust setup action requires
+Python 3.11+ with `tomllib`, available on the selected hosted runners. Rust
+compilation uses the lockfile and cached build dependencies. Java setup owns the
+Gradle cache. Android SDK and NDK packages are explicit, and the project keeps its
+Gradle wrapper. The Rust
+plugin build generates `android/.tauri/tauri-api` before Gradle assembles the AAR.
+Android reports are retained for seven days when a job fails.
+
+For local checks, `npm run standards` still runs the JavaScript and Rust standards
+and commitlint together. `npm run standards:js` runs the JavaScript standards and
+npm version check separately. `npm ci` runs `prepare`, which builds the bindings.
+CI checks all PR commits against the base SHA, checks the pushed range when its
+previous commit is still an ancestor, and checks the last commit for a new branch,
+rewritten history, or a manual run.
+
+The reusable jobs expose timeout and command/task arguments, plus runner inputs
+where needed. Checks uses a Linux runner because workflow lint runs in Docker;
+Android setup requires Linux x86_64 for the NDK host tools. A project can
+override JavaScript commands, Rust feature/test arguments, Linux packages, Android
+SDK/Gradle settings, and Swift package or iOS compilation settings in the caller.
+Cargo and Gradle argument inputs are space-separated tokens, not shell programs;
+wildcards remain literal. JavaScript command inputs are trusted workflow code.
+
+To adopt the template in another plugin, copy the workflow and local action files
+together, declare the exact npm version in `packageManager`, and adjust its caller.
+Provide `standards:js` and the JavaScript test command, preserving the project's
+existing checks. Keep special procedures, such as emulator tests, minified consumers, and
+example builds, in clearly named project jobs. Add each required job to the
+aggregate check's `needs` list. Custom mobile jobs can reuse the Android setup
+composite without using the AAR workflow. The standard Android test task runs
+before Tauri scaffolding and supports isolated JVM tests; tests that require the
+plugin module must run after scaffolding in a project-owned sequence.
+
+Connectivity's iOS job tests `ConnectivityCore` and checks the Rust plugin for
+`aarch64-apple-ios`. It does not build or test the Swift plugin inside a consumer
+host. Other callers select `swift-package`, `rust-target`, and package-specific
+`cargo-args`; the iOS job must enable at least one check.
+
+Preserve these project-specific checks when adopting the template:
+
+   * **audio:** ALSA, Java 21, the consumer APK, native unit tests, and compilation
+     of device tests. Its wrapper is inside the example; use a custom Android job.
+   * **connectivity:** desktop tests, Kotlin mapping tests, the AAR, Swift core
+     tests, and the iOS Rust check selected by this caller.
+   * **download:** Kotlin tests, the AAR, Swift package tests, and a package-scoped
+     iOS Rust check. Device instrumentation remains separate validation.
+   * **fs-resolver:** the Gradle contract check, Linux workspace/example linting,
+     package-scoped native tests, and iOS Clippy in a custom platform job.
+   * **http-client:** an Android Rust cross-check using shared SDK/NDK setup,
+     without inventing an AAR or Gradle build.
+   * **media-parser:** full workspace integration tests and doctests, native
+     thumbnail backends, iOS plugin/backend builds, Android test linking, and the
+     minified consumer/emulator tests. Keep its platform orchestration explicit.
+   * **sqlite:** integration tests, `check:iife`, and both example builds. Use
+     `test-args: --workspace --lib --test *` without shell quotes around `*`.
+   * **text-scale:** Swift/Kotlin tests, mobile Clippy, and both standalone and
+     embedded-host AAR builds as separate Gradle invocations in a custom job.
+
+Local actions resolve in the checked-out project. Moving these workflows to a
+shared repository later also requires versioned references for the shared setup
+actions; changing only the workflow's `uses` path is not sufficient. No shared
+hosting repository is required for this pilot.
+
+### Dependency Policy
+
+Rust dependency policy is checked on pushes, pull requests, and weekly against the
+committed workspace lockfile. Install cargo-deny and run the same check locally:
+
+```bash
+cargo install cargo-deny --version 0.20.2 --locked
+cargo deny --workspace --all-features --locked check
+```
+
+`deny.toml` checks advisories, licenses, duplicate versions, and dependency sources
+across all platforms, including development dependencies. Duplicate versions produce
+warnings; wildcard dependencies and unapproved sources fail the check. The example
+app has a separate lockfile and is not included in this workspace audit.
+
+Update affected dependencies before adding advisory exceptions. Each exception must
+identify the upstream constraint and explain why an update cannot resolve it. Remove
+exceptions when upstream dependencies no longer require them. Review license additions
+and allow only the registries and Git repositories the workspace needs.
+
 ## License
 
 MIT

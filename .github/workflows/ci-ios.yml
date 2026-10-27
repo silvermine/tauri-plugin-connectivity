@@ -1,0 +1,73 @@
+name: iOS
+
+on:
+   workflow_call:
+      inputs:
+         runner:
+            type: string
+            default: macos-15
+         timeout-minutes:
+            type: number
+            default: 30
+         swift-package:
+            description: Swift package to test; empty if the project has no Swift tests.
+            type: string
+            default: ''
+         rust-target:
+            description: Optional iOS Rust compilation target.
+            type: string
+            default: ''
+         cargo-args:
+            description: Space-separated cargo check arguments for the optional Rust check.
+            type: string
+            default: --workspace --all-targets
+
+permissions:
+   contents: read
+
+env:
+   CARGO_TERM_COLOR: always
+
+defaults:
+   run:
+      shell: bash
+
+jobs:
+   ios:
+      name: Native tests and checks
+      runs-on: ${{ inputs.runner }}
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      steps:
+         - name: Checkout repository
+           uses: actions/checkout@v4
+
+         - name: Require an iOS check
+           env:
+              SWIFT_PACKAGE: ${{ inputs.swift-package }}
+              RUST_TARGET: ${{ inputs.rust-target }}
+           run: |
+              if [[ -z "$SWIFT_PACKAGE" && -z "$RUST_TARGET" ]]; then
+                 echo 'Set swift-package or rust-target, or omit the iOS job' >&2
+                 exit 1
+              fi
+
+         - name: Run Swift tests
+           if: inputs.swift-package != ''
+           env:
+              SWIFT_PACKAGE: ${{ inputs.swift-package }}
+           run: swift test --package-path "$SWIFT_PACKAGE"
+
+         - name: Setup Rust
+           if: ${{ !cancelled() && inputs.rust-target != '' }}
+           uses: ./.github/actions/setup-rust
+           with:
+              target: ${{ inputs.rust-target }}
+
+         - name: Check iOS Rust code
+           if: ${{ !cancelled() && inputs.rust-target != '' }}
+           env:
+              RUST_TARGET: ${{ inputs.rust-target }}
+              CARGO_ARGS: ${{ inputs.cargo-args }}
+           run: |
+              read -r -a cargo_args <<< "$CARGO_ARGS"
+              cargo check --locked --target "$RUST_TARGET" "${cargo_args[@]}"

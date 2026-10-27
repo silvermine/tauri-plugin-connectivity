@@ -1,0 +1,43 @@
+name: Setup project Rust
+description: Install the declared Rust version; requires Python 3.11+ on the runner.
+
+inputs:
+   components:
+      description: Comma-separated Rust components.
+      default: ''
+   target:
+      description: Additional Rust target.
+      default: ''
+   cache:
+      description: Whether to restore and save the Rust build cache.
+      default: 'true'
+
+outputs:
+   version:
+      description: Rust version declared by the project.
+      value: ${{ steps.version.outputs.version }}
+
+runs:
+   using: composite
+   steps:
+      - name: Read project Rust version
+        id: version
+        shell: bash
+        run: |
+           python - <<'PY' >> "$GITHUB_OUTPUT"
+           import sys
+           if sys.version_info < (3, 11):
+               raise SystemExit('Rust setup requires Python 3.11 or newer')
+           import tomllib
+           with open('Cargo.toml', 'rb') as manifest:
+               print('version=' + tomllib.load(manifest)['package']['rust-version'])
+           PY
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+           toolchain: ${{ steps.version.outputs.version }}
+           components: ${{ inputs.components }}
+           target: ${{ inputs.target }}
+           cache: ${{ inputs.cache }}
+           cache-key: ${{ inputs.target }}

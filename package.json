@@ -3,6 +3,7 @@
    "version": "0.1.0",
    "description": "Network connectivity monitoring plugin for Tauri applications",
    "type": "module",
+   "packageManager": "npm@11.17.0",
    "types": "./dist-js/index.d.ts",
    "main": "./dist-js/index.cjs",
    "module": "./dist-js/index.js",
@@ -32,7 +33,8 @@
       "test:rust": "cargo test --workspace --lib",
       "type-check:ts": "tsc -b --pretty",
       "type-check": "run-p type-check:ts",
-      "standards": "npm run eslint && npm run type-check && npm run markdownlint && npm run rust:lint && npm run commitlint && npm run check-node-version",
+      "standards:js": "npm run eslint && npm run type-check && npm run markdownlint && npm run check-node-version",
+      "standards": "npm run standards:js && npm run rust:lint && npm run commitlint",
       "tauri": "tauri"
    },
    "author": "Jeremy Thomerson",

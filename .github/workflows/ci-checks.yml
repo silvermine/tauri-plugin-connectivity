@@ -1,0 +1,88 @@
+name: Checks
+
+on:
+   workflow_call:
+      inputs:
+         timeout-minutes:
+            type: number
+            default: 10
+         check-command:
+            description: Project JavaScript standards command.
+            type: string
+            default: npm run standards:js
+         test-command:
+            description: Project JavaScript test command.
+            type: string
+            default: npm run test:ts
+
+permissions:
+   contents: read
+
+defaults:
+   run:
+      shell: bash
+
+jobs:
+   checks:
+      name: JavaScript, format, and commits
+      runs-on: ubuntu-24.04
+      timeout-minutes: ${{ inputs.timeout-minutes }}
+      steps:
+         - name: Checkout repository
+           uses: actions/checkout@v4
+           with:
+              fetch-depth: 0
+
+         - name: Setup Node.js
+           uses: ./.github/actions/setup-node
+
+         - name: Check workflow files
+           uses: docker://rhysd/actionlint:1.7.12
+           with:
+              args: -color
+
+         - name: Install npm dependencies
+           run: npm ci
+
+         - name: Setup Rust formatting
+           uses: ./.github/actions/setup-rust
+           with:
+              components: rustfmt
+              cache: 'false'
+
+         - name: Check Rust formatting
+           run: cargo fmt --all -- --check
+
+         - name: Check JavaScript standards
+           if: ${{ !cancelled() }}
+           env:
+              CHECK_COMMAND: ${{ inputs.check-command }}
+           run: bash -euo pipefail -c "$CHECK_COMMAND"
+
+         - name: Run JavaScript tests
+           if: ${{ !cancelled() }}
+           env:
+              TEST_COMMAND: ${{ inputs.test-command }}
+           run: bash -euo pipefail -c "$TEST_COMMAND"
+
+         - name: Check commit messages
+           if: ${{ !cancelled() }}
+           env:
+              PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+              PUSH_BEFORE_SHA: ${{ github.event.before }}
+           run: |
+              commit_from=''
+              if [[ "$GITHUB_EVENT_NAME" == 'pull_request' ]]; then
+                 git cat-file -e "$PR_BASE_SHA^{commit}"
+                 commit_from="$PR_BASE_SHA"
+              elif [[ "$GITHUB_EVENT_NAME" == 'push' ]] &&
+                   git cat-file -e "$PUSH_BEFORE_SHA^{commit}" 2>/dev/null &&
+                   git merge-base --is-ancestor "$PUSH_BEFORE_SHA" HEAD; then
+                 commit_from="$PUSH_BEFORE_SHA"
+              fi
+
+              if [[ -n "$commit_from" ]]; then
+                 npm exec --no -- commitlint --from "$commit_from" --to HEAD
+              else
+                 git log -1 --format=%B HEAD | npm exec --no -- commitlint
+              fi

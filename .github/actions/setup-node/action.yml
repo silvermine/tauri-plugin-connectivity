@@ -1,0 +1,21 @@
+name: Setup project Node.js
+description: Install the Node.js and npm versions declared by the calling project.
+
+runs:
+   using: composite
+   steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+           node-version-file: .nvmrc
+           cache: npm
+
+      - name: Install declared npm version
+        shell: bash
+        run: |
+           package_manager="$(node -p 'require("./package.json").packageManager')"
+           if [[ ! "$package_manager" =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo 'package.json must declare an exact npm version in packageManager' >&2
+              exit 1
+           fi
+           npm install --global "$package_manager"

@@ -1,157 +1,74 @@
 name: CI
 
 on:
-   push: # Runs on push to any branch
+   push:
    pull_request:
       branches: [ "master" ]
+   workflow_dispatch:
 
-env:
-   CARGO_TERM_COLOR: always
+permissions:
+   contents: read
+
+defaults:
+   run:
+      shell: bash
+
+concurrency:
+   group: ci-${{ github.event.pull_request.number || github.ref }}
+   cancel-in-progress: true
 
 jobs:
-   swift-tests:
-      name: Swift Tests
-      runs-on: macos-15
+   dependencies:
+      name: Dependencies
+      uses: ./.github/workflows/dependencies.yml
 
-      steps:
-         - name: Checkout repository
-           uses: actions/checkout@v4
+   checks:
+      name: Checks
+      uses: ./.github/workflows/ci-checks.yml
 
-         - name: Run Swift tests
-           run: swift test --package-path ios/ConnectivityCore
-
-   kotlin-tests:
-      name: Kotlin Tests
-      runs-on: ubuntu-latest
-
-      steps:
-         - name: Checkout repository
-           uses: actions/checkout@v4
-
-         - name: Setup Java
-           uses: actions/setup-java@v4
-           with:
-              distribution: 'temurin'
-              java-version: '17'
-              cache: 'gradle'
-
-         - name: Run Kotlin tests
-           working-directory: android
-           run: ./gradlew :lib:test
-
-
-   android-plugin-build:
-      name: Android Plugin Build
-      runs-on: ubuntu-latest
-
-      steps:
-         - name: Checkout repository
-           uses: actions/checkout@v4
-
-         - name: Setup Java
-           uses: actions/setup-java@v4
-           with:
-              distribution: 'temurin'
-              java-version: '17'
-              cache: 'gradle'
-
-         - name: Setup Android SDK
-           uses: android-actions/setup-android@v3
-           with:
-              # v3 default is `tools platform-tools`; Google removed `tools` from the SDK repo.
-              packages: 'platform-tools'
-
-         - name: Setup Rust toolchain
-           uses: actions-rust-lang/setup-rust-toolchain@v1
-           with:
-              toolchain: '1.94.0'
-              target: aarch64-linux-android
-              cache: true
-
-         - name: Add Android target
-           run: rustup target add aarch64-linux-android
-
-         - name: Populate android/.tauri/tauri-api
-           run: cargo build -p tauri-plugin-connectivity --target aarch64-linux-android
-
-         - name: Assemble plugin AAR
-           working-directory: android
-           run: ./gradlew assembleDebug
-
-   desktop-rust-tests:
-      name: Rust Tests (${{ matrix.platform }})
+   rust:
+      name: Rust (${{ matrix.platform }})
       strategy:
          fail-fast: false
          matrix:
             include:
+               - platform: Linux
+                 runner: ubuntu-24.04
                - platform: Windows
-                 os: windows-2025
+                 runner: windows-2025
                - platform: macOS
-                 os: macos-15
-      runs-on: ${{ matrix.os }}
+                 runner: macos-15
+      uses: ./.github/workflows/ci-rust.yml
+      with:
+         runner: ${{ matrix.runner }}
 
-      steps:
-         - name: Checkout repository
-           uses: actions/checkout@v4
+   android:
+      name: Android
+      uses: ./.github/workflows/ci-android.yml
+      with:
+         package: tauri-plugin-connectivity
+         test-args: ':lib:test'
+         sdk-packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+         min-sdk: 23
 
-         - name: Setup Rust toolchain
-           uses: actions-rust-lang/setup-rust-toolchain@v1
-           with:
-              toolchain: '1.94.0'
-              cache: true
-
-         - name: Run Rust tests
-           run: cargo test --workspace --lib
+   ios:
+      name: iOS
+      uses: ./.github/workflows/ci-ios.yml
+      with:
+         swift-package: ios/ConnectivityCore
+         rust-target: aarch64-apple-ios
+         cargo-args: -p tauri-plugin-connectivity
 
    ci:
       name: Continuous Integration
-      runs-on: ubuntu-latest
-
+      if: ${{ always() }}
+      needs: [dependencies, checks, rust, android, ios]
+      runs-on: ubuntu-24.04
+      timeout-minutes: 5
       steps:
-         - name: Checkout repository
-           uses: actions/checkout@v4
-           with:
-              fetch-depth: 0
-
-         - name: Setup Node.js
-           uses: actions/setup-node@v4
-           with:
-              node-version-file: '.nvmrc'
-              cache: 'npm'
-
-         - name: Install system dependencies
+         - name: Require every job to succeed
+           env:
+              JOB_RESULTS: ${{ toJSON(needs) }}
            run: |
-              sudo apt-get update
-              sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-
-         - name: Setup Rust toolchain
-           uses: actions-rust-lang/setup-rust-toolchain@v1
-           with:
-              toolchain: '1.94.0'
-              components: rustfmt, clippy
-              cache: true
-
-         - name: Install npm dependencies
-           run: npm ci
-
-         - name: Run standards checks
-           run: |
-             # Determine commitlint range
-             if [ "${{ github.event_name }}" = "pull_request" ]; then
-                export COMMITLINT_FROM="${{ github.event.pull_request.base.sha }}"
-             else
-                # For pushes, verify the before commit exists
-                if git cat-file -e "${{ github.event.before }}" 2>/dev/null; then
-                   export COMMITLINT_FROM="${{ github.event.before }}"
-                else
-                   # Fallback: check only HEAD commit on force push or first push
-                   export COMMITLINT_FROM="HEAD~1"
-                fi
-             fi
-             npm run standards
-
-         - name: Run cargo check
-           run: cargo check --workspace --all-targets
-
-         - name: Run TypeScript and Rust tests
-           run: npm test
+              jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "$JOB_RESULTS"
+              jq -e 'length > 0 and all(.[]; .result == "success")' <<< "$JOB_RESULTS"
