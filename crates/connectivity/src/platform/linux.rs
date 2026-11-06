@@ -3,13 +3,12 @@ use std::path::Path;
 use std::time::Duration;
 
 use tracing::{debug, warn};
-use zbus::blocking::connection::Builder as ConnectionBuilder;
-use zbus::blocking::fdo::DBusProxy;
-use zbus::blocking::proxy::Builder as ProxyBuilder;
-use zbus::blocking::{Connection, Proxy};
+use zbus::connection::Builder as ConnectionBuilder;
+use zbus::fdo::DBusProxy;
 use zbus::names::BusName;
+use zbus::proxy::Builder as ProxyBuilder;
 use zbus::proxy::CacheProperties;
-use zbus::zvariant::{ObjectPath, OwnedObjectPath};
+use zbus::{Connection, ObjectPath, OwnedObjectPath, Proxy};
 
 use crate::error::{Error, Result};
 use crate::types::{ConnectionStatus, ConnectionType, ConnectionTypes};
@@ -83,6 +82,22 @@ const IPV4_DEFAULT_DESTINATION: &str = "00000000";
 const IPV6_DEFAULT_DESTINATION: &str = "00000000000000000000000000000000";
 const IPV6_DEFAULT_PREFIX_LEN: &str = "00";
 
+struct FallbackPaths<'a> {
+   ipv4_routes: &'a Path,
+   ipv6_routes: &'a Path,
+   sys_class_net: &'a Path,
+}
+
+impl Default for FallbackPaths<'static> {
+   fn default() -> Self {
+      Self {
+         ipv4_routes: Path::new(PROC_NET_ROUTE),
+         ipv6_routes: Path::new(PROC_NET_IPV6_ROUTE),
+         sys_class_net: Path::new(SYS_CLASS_NET),
+      }
+   }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectedState {
    Connected,
@@ -114,24 +129,35 @@ impl Default for ConnectionDetails {
 /// connectivity, primary-route, transport, and metered state over D-Bus. Systems
 /// without NetworkManager fall back to passive kernel state only.
 pub(crate) fn connection_status() -> Result<ConnectionStatus> {
+   // Drive connection creation and every D-Bus operation on the same runtime.
+   zbus::block_on(async {
+      connection_status_from_connection(system_bus_connection().await, &FallbackPaths::default())
+         .await
+   })
+}
+
+async fn connection_status_from_connection(
+   connection: zbus::Result<Connection>,
+   fallback_paths: &FallbackPaths<'_>,
+) -> Result<ConnectionStatus> {
    debug!("querying Linux connection status");
 
-   let connection = match system_bus_connection() {
+   let connection = match connection {
       Ok(connection) => {
          debug!("connected to Linux system D-Bus");
          connection
       }
       Err(error) => {
          warn!(%error, "failed to connect to Linux system bus; using passive fallback");
-         return Ok(fallback_connection_status());
+         return Ok(fallback_connection_status(fallback_paths));
       }
    };
 
-   match service_has_owner(&connection, NETWORK_MANAGER_SERVICE) {
+   match service_has_owner(&connection, NETWORK_MANAGER_SERVICE).await {
       Ok(true) => {
          debug!("NetworkManager service is present");
 
-         match network_manager_connection_status(&connection) {
+         match network_manager_connection_status(&connection).await {
             Ok(status) => {
                debug!(
                   ?status,
@@ -141,23 +167,36 @@ pub(crate) fn connection_status() -> Result<ConnectionStatus> {
             }
             Err(error) => {
                warn!(%error, "failed to query NetworkManager; using passive fallback");
-               Ok(fallback_connection_status())
+               Ok(fallback_connection_status(fallback_paths))
             }
          }
       }
       Ok(false) => {
          debug!("NetworkManager service is not present; using passive fallback");
-         Ok(fallback_connection_status())
+         Ok(fallback_connection_status(fallback_paths))
       }
       Err(error) => {
          warn!(%error, "failed to probe NetworkManager service; using passive fallback");
-         Ok(fallback_connection_status())
+         Ok(fallback_connection_status(fallback_paths))
       }
    }
 }
 
 /// Returns the supported physical connection transport classes.
 pub(crate) fn supported_connection_types() -> Result<Vec<ConnectionType>> {
+   zbus::block_on(async {
+      supported_connection_types_from_connection(
+         system_bus_connection().await,
+         &FallbackPaths::default(),
+      )
+      .await
+   })
+}
+
+async fn supported_connection_types_from_connection(
+   connection: zbus::Result<Connection>,
+   fallback_paths: &FallbackPaths<'_>,
+) -> Result<Vec<ConnectionType>> {
    debug!("querying Linux supported connection types");
 
    // Prefer NetworkManager's realized `Devices` list. Its D-Bus docs describe
@@ -165,31 +204,31 @@ pub(crate) fn supported_connection_types() -> Result<Vec<ConnectionType>> {
    // `AllDevices` can include placeholders that do not correspond to real,
    // present hardware:
    // https://networkmanager.dev/docs/api/latest/gdbus-org.freedesktop.NetworkManager.html
-   let connection = match system_bus_connection() {
+   let connection = match connection {
       Ok(connection) => connection,
       Err(error) => {
          warn!(%error, "failed to connect to Linux system bus; using sysfs fallback");
-         return supported_types_from_sysfs(Path::new(SYS_CLASS_NET));
+         return supported_types_from_sysfs(fallback_paths.sys_class_net);
       }
    };
 
-   match service_has_owner(&connection, NETWORK_MANAGER_SERVICE) {
-      Ok(true) => match network_manager_supported_connection_types(&connection) {
+   match service_has_owner(&connection, NETWORK_MANAGER_SERVICE).await {
+      Ok(true) => match network_manager_supported_connection_types(&connection).await {
          Ok(connection_types) => Ok(connection_types),
          Err(error) => {
             warn!(%error, "failed to query NetworkManager devices; using sysfs fallback");
-            supported_types_from_sysfs(Path::new(SYS_CLASS_NET))
+            supported_types_from_sysfs(fallback_paths.sys_class_net)
          }
       },
-      Ok(false) => supported_types_from_sysfs(Path::new(SYS_CLASS_NET)),
+      Ok(false) => supported_types_from_sysfs(fallback_paths.sys_class_net),
       Err(error) => {
          warn!(%error, "failed to probe NetworkManager service; using sysfs fallback");
-         supported_types_from_sysfs(Path::new(SYS_CLASS_NET))
+         supported_types_from_sysfs(fallback_paths.sys_class_net)
       }
    }
 }
 
-fn network_manager_supported_connection_types(
+async fn network_manager_supported_connection_types(
    connection: &Connection,
 ) -> zbus::Result<Vec<ConnectionType>> {
    let manager = dbus_proxy(
@@ -197,10 +236,13 @@ fn network_manager_supported_connection_types(
       NETWORK_MANAGER_SERVICE,
       NETWORK_MANAGER_PATH,
       NETWORK_MANAGER_INTERFACE,
-   )?;
-   let devices = manager.get_property::<Vec<OwnedObjectPath>>("Devices")?;
+   )
+   .await?;
+   let devices = manager
+      .get_property::<Vec<OwnedObjectPath>>("Devices")
+      .await?;
 
-   collect_supported_connection_types_from_devices(devices, |device| {
+   collect_supported_connection_types_from_devices(devices, async |device| {
       // DeviceType is the NetworkManager transport enum. Values used below are
       // from the NetworkManager D-Bus type reference:
       // https://networkmanager.pages.freedesktop.org/NetworkManager/NetworkManager/nm-dbus-types.html
@@ -209,34 +251,41 @@ fn network_manager_supported_connection_types(
          NETWORK_MANAGER_SERVICE,
          device.as_str(),
          NETWORK_MANAGER_DEVICE_INTERFACE,
-      )?;
-      device_proxy.get_property::<u32>("DeviceType")
+      )
+      .await?;
+      device_proxy.get_property::<u32>("DeviceType").await
    })
+   .await
 }
 
-fn system_bus_connection() -> zbus::Result<Connection> {
-   ConnectionBuilder::system()?
-      .method_timeout(DBUS_METHOD_TIMEOUT)
-      .build()
+async fn system_bus_connection() -> zbus::Result<Connection> {
+   bus_connection(ConnectionBuilder::system()).await
 }
 
-fn network_manager_connection_status(connection: &Connection) -> zbus::Result<ConnectionStatus> {
+async fn bus_connection(builder: ConnectionBuilder<'_>) -> zbus::Result<Connection> {
+   builder.method_timeout(DBUS_METHOD_TIMEOUT).build().await
+}
+
+async fn network_manager_connection_status(
+   connection: &Connection,
+) -> zbus::Result<ConnectionStatus> {
    let manager = dbus_proxy(
       connection,
       NETWORK_MANAGER_SERVICE,
       NETWORK_MANAGER_PATH,
       NETWORK_MANAGER_INTERFACE,
-   )?;
+   )
+   .await?;
 
    // `Connectivity` is a cached property. `FULL` maps to full connectivity,
    // `PORTAL` and `LIMITED` map to connected but constrained, and `UNKNOWN`
    // falls back to NM's broader networking state.
-   let connectivity = manager.get_property::<u32>("Connectivity")?;
+   let connectivity = manager.get_property::<u32>("Connectivity").await?;
    debug!(connectivity, "queried NetworkManager connectivity state");
 
    let connectivity_state = match map_connectivity(connectivity) {
       ConnectedState::Unknown => {
-         let state = manager.get_property::<u32>("State")?;
+         let state = manager.get_property::<u32>("State").await?;
          debug!(
             connectivity,
             state, "NetworkManager connectivity is unknown; falling back to state"
@@ -258,7 +307,7 @@ fn network_manager_connection_status(connection: &Connection) -> zbus::Result<Co
       return Ok(ConnectionStatus::disconnected());
    }
 
-   let details = match primary_connection_details(connection, &manager) {
+   let details = match primary_connection_details(connection, &manager).await {
       Ok(details) => details,
       Err(error) => {
          warn!(%error, "failed to resolve Linux primary connection details; policy state is unknown");
@@ -274,14 +323,16 @@ fn network_manager_connection_status(connection: &Connection) -> zbus::Result<Co
    })
 }
 
-fn primary_connection_details(
+async fn primary_connection_details(
    connection: &Connection,
    manager: &Proxy<'_>,
 ) -> zbus::Result<ConnectionDetails> {
    // NetworkManager chooses the primary connection for the default route. Its
    // active connection object is the stable way to find the devices that should
    // drive transport and metered decisions.
-   let primary_connection = manager.get_property::<OwnedObjectPath>("PrimaryConnection")?;
+   let primary_connection = manager
+      .get_property::<OwnedObjectPath>("PrimaryConnection")
+      .await?;
    debug!(
       primary_connection = %primary_connection.as_str(),
       "queried NetworkManager primary connection"
@@ -297,8 +348,11 @@ fn primary_connection_details(
       NETWORK_MANAGER_SERVICE,
       primary_connection.as_str(),
       NETWORK_MANAGER_ACTIVE_CONNECTION_INTERFACE,
-   )?;
-   let devices = active_connection.get_property::<Vec<OwnedObjectPath>>("Devices")?;
+   )
+   .await?;
+   let devices = active_connection
+      .get_property::<Vec<OwnedObjectPath>>("Devices")
+      .await?;
    debug!(
       device_count = devices.len(),
       primary_connection = %primary_connection.as_str(),
@@ -316,7 +370,7 @@ fn primary_connection_details(
    let mut roaming_states = Vec::with_capacity(devices.len());
 
    for device in devices {
-      match device_details(connection, &device) {
+      match device_details(connection, &device).await {
          Ok(device_details) => {
             read_any_device = true;
             metered_states.push(device_details.metered);
@@ -353,7 +407,7 @@ fn primary_connection_details(
    Ok(details)
 }
 
-fn device_details(
+async fn device_details(
    connection: &Connection,
    device: &OwnedObjectPath,
 ) -> zbus::Result<ConnectionDetails> {
@@ -362,11 +416,12 @@ fn device_details(
       NETWORK_MANAGER_SERVICE,
       device.as_str(),
       NETWORK_MANAGER_DEVICE_INTERFACE,
-   )?;
+   )
+   .await?;
 
    // DeviceType gives the transport class; Metered lives on the device, not on
    // the active connection.
-   let device_type = device_proxy.get_property::<u32>("DeviceType")?;
+   let device_type = device_proxy.get_property::<u32>("DeviceType").await?;
    let connection_type = map_device_type(device_type);
    debug!(
       device = %device.as_str(),
@@ -375,7 +430,7 @@ fn device_details(
       "queried NetworkManager device type"
    );
 
-   let metered = match device_proxy.get_property::<u32>("Metered") {
+   let metered = match device_proxy.get_property::<u32>("Metered").await {
       Ok(metered) => {
          let metered_status = metered_status(metered);
          debug!(
@@ -391,9 +446,10 @@ fn device_details(
          None
       }
    };
-   let roaming = connection_type_roaming_status(connection_type, || {
-      modem_is_roaming(connection, &device_proxy)
-   });
+   let roaming = connection_type_roaming_status(connection_type, async || {
+      modem_is_roaming(connection, &device_proxy).await
+   })
+   .await;
 
    Ok(ConnectionDetails {
       metered,
@@ -402,12 +458,12 @@ fn device_details(
    })
 }
 
-fn connection_type_roaming_status(
+async fn connection_type_roaming_status(
    connection_type: ConnectionType,
-   cellular_status: impl FnOnce() -> Option<bool>,
+   cellular_status: impl AsyncFnOnce() -> Option<bool>,
 ) -> Option<bool> {
    if connection_type == ConnectionType::Cellular {
-      cellular_status()
+      cellular_status().await
    } else {
       // NetworkManager's modem type maps to Cellular. Every other mapped or
       // unknown transport is therefore definitively outside roaming policy.
@@ -415,11 +471,11 @@ fn connection_type_roaming_status(
    }
 }
 
-fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> Option<bool> {
+async fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> Option<bool> {
    // NM modem devices expose a `Udi` that usually points at the corresponding
    // ModemManager object. Only that object can tell us whether the cellular
    // registration state is roaming.
-   match service_has_owner(connection, MODEM_MANAGER_SERVICE) {
+   match service_has_owner(connection, MODEM_MANAGER_SERVICE).await {
       Ok(true) => {}
       Ok(false) => {
          debug!("ModemManager service is not present; roaming is unknown");
@@ -431,7 +487,7 @@ fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> Option
       }
    }
 
-   let udi = match device_proxy.get_property::<String>("Udi") {
+   let udi = match device_proxy.get_property::<String>("Udi").await {
       Ok(udi) => {
          debug!(udi, "queried NetworkManager modem Udi");
          udi
@@ -463,7 +519,9 @@ fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> Option
       MODEM_MANAGER_SERVICE,
       modem_path.as_str(),
       MODEM_MANAGER_3GPP_INTERFACE,
-   ) {
+   )
+   .await
+   {
       Ok(modem) => modem,
       Err(error) => {
          warn!(%error, "failed to create ModemManager proxy; roaming is unknown");
@@ -471,7 +529,7 @@ fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> Option
       }
    };
 
-   match modem.get_property::<u32>("RegistrationState") {
+   match modem.get_property::<u32>("RegistrationState").await {
       Ok(registration_state) => {
          let roaming = roaming_status(registration_state);
          debug!(
@@ -488,42 +546,44 @@ fn modem_is_roaming(connection: &Connection, device_proxy: &Proxy<'_>) -> Option
    }
 }
 
-fn dbus_proxy<'a>(
+async fn dbus_proxy<'a>(
    connection: &'a Connection,
    destination: &'a str,
    path: &'a str,
    interface: &'a str,
 ) -> zbus::Result<Proxy<'a>> {
    ProxyBuilder::new(connection)
-      .destination(destination)?
-      .path(path)?
-      .interface(interface)?
+      .destination(destination)
+      .path(path)
+      .interface(interface)
       .cache_properties(CacheProperties::No)
       .build()
+      .await
 }
 
-fn service_has_owner(connection: &Connection, service: &str) -> zbus::Result<bool> {
+async fn service_has_owner(connection: &Connection, service: &str) -> zbus::Result<bool> {
    let proxy = DBusProxy::builder(connection)
-      .destination(DBUS_SERVICE)?
+      .destination(DBUS_SERVICE)
       .cache_properties(CacheProperties::No)
-      .build()?;
+      .build()
+      .await?;
    let service_name = BusName::try_from(service)?;
 
-   Ok(proxy.name_has_owner(service_name)?)
+   Ok(proxy.name_has_owner(service_name).await?)
 }
 
-fn fallback_connection_status() -> ConnectionStatus {
+fn fallback_connection_status(paths: &FallbackPaths<'_>) -> ConnectionStatus {
    // Systems that do not run NetworkManager still commonly expose kernel route
    // tables through /proc. An up, non-loopback default route is the strongest
    // passive signal available without probing the network.
-   let ipv4_route_table = match fs::read_to_string(PROC_NET_ROUTE) {
+   let ipv4_route_table = match fs::read_to_string(paths.ipv4_routes) {
       Ok(route_table) => route_table,
       Err(error) => {
          warn!(%error, "failed to read Linux IPv4 route table");
          String::new()
       }
    };
-   let ipv6_route_table = match fs::read_to_string(PROC_NET_IPV6_ROUTE) {
+   let ipv6_route_table = match fs::read_to_string(paths.ipv6_routes) {
       Ok(route_table) => route_table,
       Err(error) => {
          warn!(%error, "failed to read Linux IPv6 route table");
@@ -531,11 +591,7 @@ fn fallback_connection_status() -> ConnectionStatus {
       }
    };
 
-   fallback_connection_status_from_routes(
-      &ipv4_route_table,
-      &ipv6_route_table,
-      Path::new(SYS_CLASS_NET),
-   )
+   fallback_connection_status_from_routes(&ipv4_route_table, &ipv6_route_table, paths.sys_class_net)
 }
 
 fn fallback_connection_status_from_routes(
@@ -609,9 +665,9 @@ fn collect_supported_connection_types(
    connection_types.into_vec()
 }
 
-fn collect_supported_connection_types_from_devices<E>(
+async fn collect_supported_connection_types_from_devices<E>(
    devices: impl IntoIterator<Item = OwnedObjectPath>,
-   mut read_device_type: impl FnMut(&OwnedObjectPath) -> std::result::Result<u32, E>,
+   mut read_device_type: impl AsyncFnMut(&OwnedObjectPath) -> std::result::Result<u32, E>,
 ) -> std::result::Result<Vec<ConnectionType>, E>
 where
    E: std::fmt::Display,
@@ -620,7 +676,7 @@ where
    let mut first_error = None;
 
    for device in devices {
-      match read_device_type(&device) {
+      match read_device_type(&device).await {
          Ok(device_type) => {
             debug!(
                device = %device.as_str(),
@@ -933,10 +989,10 @@ mod tests {
 
    // NetworkManager and ModemManager enum members, and kernel ARPHRD values,
    // that only the tests use.
-   const NM_CONNECTIVITY_UNKNOWN: u32 = 0;
-   const NM_STATE_DISCONNECTED: u32 = 20;
+   pub(super) const NM_CONNECTIVITY_UNKNOWN: u32 = 0;
+   pub(super) const NM_STATE_DISCONNECTED: u32 = 20;
    const NM_STATE_CONNECTED_SITE: u32 = 60;
-   const MM_MODEM_3GPP_REGISTRATION_STATE_HOME: u32 = 1;
+   pub(super) const MM_MODEM_3GPP_REGISTRATION_STATE_HOME: u32 = 1;
    const LINUX_ARPHRD_LOOPBACK: u32 = 772;
 
    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -1000,9 +1056,10 @@ mod tests {
    #[case::unknown(ConnectionType::Unknown)]
    fn treats_non_cellular_connection_types_as_not_roaming(#[case] connection_type: ConnectionType) {
       assert_eq!(
-         connection_type_roaming_status(connection_type, || {
-            panic!("non-cellular transport must not query ModemManager")
-         }),
+         zbus::block_on(connection_type_roaming_status(
+            connection_type,
+            async || { panic!("non-cellular transport must not query ModemManager") }
+         )),
          Some(false)
       );
    }
@@ -1010,7 +1067,10 @@ mod tests {
    #[test]
    fn uses_cellular_status_for_cellular_connection_type() {
       assert_eq!(
-         connection_type_roaming_status(ConnectionType::Cellular, || None),
+         zbus::block_on(connection_type_roaming_status(
+            ConnectionType::Cellular,
+            async || None
+         )),
          None
       );
    }
@@ -1042,14 +1102,17 @@ mod tests {
       ];
 
       assert_eq!(
-         collect_supported_connection_types_from_devices(devices, |device| {
-            match device.as_str() {
-               "/org/freedesktop/NetworkManager/Devices/1" => Ok(NM_DEVICE_TYPE_ETHERNET),
-               "/org/freedesktop/NetworkManager/Devices/2" => Err("device disappeared"),
-               "/org/freedesktop/NetworkManager/Devices/3" => Ok(NM_DEVICE_TYPE_WIFI),
-               _ => unreachable!(),
+         zbus::block_on(collect_supported_connection_types_from_devices(
+            devices,
+            async |device| {
+               match device.as_str() {
+                  "/org/freedesktop/NetworkManager/Devices/1" => Ok(NM_DEVICE_TYPE_ETHERNET),
+                  "/org/freedesktop/NetworkManager/Devices/2" => Err("device disappeared"),
+                  "/org/freedesktop/NetworkManager/Devices/3" => Ok(NM_DEVICE_TYPE_WIFI),
+                  _ => unreachable!(),
+               }
             }
-         })
+         ))
          .unwrap(),
          vec![ConnectionType::Wifi, ConnectionType::Ethernet]
       );
@@ -1063,9 +1126,10 @@ mod tests {
       ];
 
       assert!(
-         collect_supported_connection_types_from_devices(devices, |_| {
-            Err::<u32, _>("device disappeared")
-         })
+         zbus::block_on(collect_supported_connection_types_from_devices(
+            devices,
+            async |_| { Err::<u32, _>("device disappeared") }
+         ))
          .is_err()
       );
    }
@@ -1078,13 +1142,16 @@ mod tests {
       ];
 
       assert!(
-         collect_supported_connection_types_from_devices(devices, |device| {
-            match device.as_str() {
-               "/org/freedesktop/NetworkManager/Devices/1" => Ok(999),
-               "/org/freedesktop/NetworkManager/Devices/2" => Err("device disappeared"),
-               _ => unreachable!(),
+         zbus::block_on(collect_supported_connection_types_from_devices(
+            devices,
+            async |device| {
+               match device.as_str() {
+                  "/org/freedesktop/NetworkManager/Devices/1" => Ok(999),
+                  "/org/freedesktop/NetworkManager/Devices/2" => Err("device disappeared"),
+                  _ => unreachable!(),
+               }
             }
-         })
+         ))
          .is_err()
       );
    }
@@ -1409,12 +1476,12 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
       write_file(iface.join("type"), &format!("{interface_type}\n"));
    }
 
-   struct TempDir {
+   pub(super) struct TempDir {
       path: PathBuf,
    }
 
    impl TempDir {
-      fn new() -> Self {
+      pub(super) fn new() -> Self {
          let id = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
          let path = std::env::temp_dir().join(format!(
             "tauri-plugin-connectivity-linux-test-{}-{id}",
@@ -1429,7 +1496,7 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
          Self { path }
       }
 
-      fn path(&self) -> &Path {
+      pub(super) fn path(&self) -> &Path {
          &self.path
       }
    }
@@ -1438,5 +1505,592 @@ eth0\t00000000\t015018AC\t0003\t0\t0\t0\t00000000\t0\t0\t0
       fn drop(&mut self) {
          let _ = fs::remove_dir_all(&self.path);
       }
+   }
+}
+
+#[cfg(test)]
+mod dbus_tests {
+   use super::tests::{
+      MM_MODEM_3GPP_REGISTRATION_STATE_HOME, NM_CONNECTIVITY_UNKNOWN, NM_STATE_DISCONNECTED,
+      TempDir,
+   };
+   use super::*;
+   use rstest::rstest;
+   use std::io::{BufRead, BufReader};
+   use std::os::unix::fs::FileTypeExt;
+   use std::path::PathBuf;
+   use std::process::{Child, Command, Stdio};
+   use std::sync::Arc;
+   use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+   use std::time::Instant;
+
+   const ACTIVE_PATH: &str = "/org/freedesktop/NetworkManager/ActiveConnection/1";
+   const DEVICE_PATH: &str = "/org/freedesktop/NetworkManager/Devices/1";
+   const BAD_DEVICE_PATH: &str = "/org/freedesktop/NetworkManager/Devices/2";
+   const MODEM_PATH: &str = "/org/freedesktop/ModemManager1/Modem/0";
+
+   struct PrivateBus {
+      child: Child,
+      address: String,
+      directory: TempDir,
+   }
+
+   impl PrivateBus {
+      fn new() -> Self {
+         let directory = TempDir::new();
+         let child = Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1"])
+            .arg(format!("--address=unix:dir={}", directory.path().display()))
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("Linux D-Bus tests require dbus-daemon");
+         // Establish ownership before any fallible setup so a failed test also
+         // kills and reaps its daemon.
+         let mut bus = Self {
+            child,
+            address: String::new(),
+            directory,
+         };
+         BufReader::new(bus.child.stdout.take().unwrap())
+            .read_line(&mut bus.address)
+            .unwrap();
+         bus.address = bus.address.trim().to_owned();
+         assert!(!bus.address.is_empty(), "private D-Bus failed to start");
+         bus
+      }
+
+      async fn connection(&self) -> Connection {
+         // Use the production timeout configuration on this private bus too.
+         let connection = bus_connection(ConnectionBuilder::address(self.address.as_str()))
+            .await
+            .unwrap();
+         assert_eq!(
+            connection.method_timeout(),
+            Some(Duration::from_millis(500))
+         );
+         connection
+      }
+   }
+
+   impl Drop for PrivateBus {
+      fn drop(&mut self) {
+         let _ = self.child.kill();
+         let _ = self.child.wait();
+      }
+   }
+
+   struct ServiceState {
+      connectivity: AtomicU32,
+      global_state: AtomicU32,
+      device_type: AtomicU32,
+      metered: AtomicU32,
+      registration: AtomicU32,
+      stall: AtomicBool,
+      unreadable_metered: AtomicBool,
+   }
+
+   impl Default for ServiceState {
+      fn default() -> Self {
+         Self {
+            connectivity: AtomicU32::new(NM_CONNECTIVITY_FULL),
+            global_state: AtomicU32::new(NM_STATE_CONNECTED_GLOBAL),
+            device_type: AtomicU32::new(NM_DEVICE_TYPE_WIFI),
+            metered: AtomicU32::new(NM_METERED_NO),
+            registration: AtomicU32::new(MM_MODEM_3GPP_REGISTRATION_STATE_HOME),
+            stall: AtomicBool::new(false),
+            unreadable_metered: AtomicBool::new(false),
+         }
+      }
+   }
+
+   struct Manager(Arc<ServiceState>);
+
+   impl Manager {
+      async fn delay_if_stalled(&self) {
+         if self.0.stall.load(Ordering::SeqCst) {
+            // Eventually reply so a missing method timeout fails the assertion
+            // instead of leaving the test suite waiting forever.
+            zruntime::SharedRuntime::current()
+               .unwrap()
+               .sleep(Duration::from_secs(2))
+               .await;
+         }
+      }
+   }
+
+   #[zbus::interface(name = "org.freedesktop.NetworkManager")]
+   impl Manager {
+      #[zbus(property)]
+      async fn connectivity(&self) -> u32 {
+         self.delay_if_stalled().await;
+         self.0.connectivity.load(Ordering::SeqCst)
+      }
+
+      #[zbus(property)]
+      fn state(&self) -> u32 {
+         self.0.global_state.load(Ordering::SeqCst)
+      }
+
+      #[zbus(property)]
+      fn primary_connection(&self) -> OwnedObjectPath {
+         object_path(ACTIVE_PATH)
+      }
+
+      #[zbus(property)]
+      async fn devices(&self) -> Vec<OwnedObjectPath> {
+         self.delay_if_stalled().await;
+         vec![object_path(DEVICE_PATH), object_path(BAD_DEVICE_PATH)]
+      }
+   }
+
+   struct WrongManager;
+
+   #[zbus::interface(name = "org.freedesktop.NetworkManager")]
+   impl WrongManager {
+      #[zbus(property)]
+      fn connectivity(&self) -> String {
+         "invalid property signature".to_owned()
+      }
+
+      #[zbus(property)]
+      fn devices(&self) -> String {
+         "invalid property signature".to_owned()
+      }
+   }
+
+   struct ActiveConnection;
+
+   #[zbus::interface(name = "org.freedesktop.NetworkManager.Connection.Active")]
+   impl ActiveConnection {
+      #[zbus(property)]
+      fn devices(&self) -> Vec<OwnedObjectPath> {
+         vec![object_path(DEVICE_PATH)]
+      }
+   }
+
+   struct Device(Arc<ServiceState>);
+
+   #[zbus::interface(name = "org.freedesktop.NetworkManager.Device")]
+   impl Device {
+      #[zbus(property)]
+      fn device_type(&self) -> u32 {
+         self.0.device_type.load(Ordering::SeqCst)
+      }
+
+      #[zbus(property)]
+      fn metered(&self) -> zbus::fdo::Result<u32> {
+         if self.0.unreadable_metered.load(Ordering::SeqCst) {
+            Err(zbus::fdo::Error::Failed("metering unavailable".to_owned()))
+         } else {
+            Ok(self.0.metered.load(Ordering::SeqCst))
+         }
+      }
+
+      #[zbus(property)]
+      fn udi(&self) -> String {
+         MODEM_PATH.to_owned()
+      }
+   }
+
+   struct WrongDevice;
+
+   #[zbus::interface(name = "org.freedesktop.NetworkManager.Device")]
+   impl WrongDevice {
+      #[zbus(property)]
+      fn device_type(&self) -> String {
+         "invalid property signature".to_owned()
+      }
+   }
+
+   struct Modem(Arc<ServiceState>);
+
+   #[zbus::interface(name = "org.freedesktop.ModemManager1.Modem.Modem3gpp")]
+   impl Modem {
+      #[zbus(property)]
+      fn registration_state(&self) -> u32 {
+         self.0.registration.load(Ordering::SeqCst)
+      }
+   }
+
+   const IPV4_ROUTE: &str = "Iface Destination Gateway Flags\neth0 00000000 0100000A 0003\n";
+   const IPV6_ROUTE: &str = "00000000000000000000000000000000 00 00000000000000000000000000000000 00 \
+       fe800000000000000000000000000001 00000400 00000000 00000000 00000003 eth0\n";
+
+   struct FallbackFixture {
+      _directory: TempDir,
+      ipv4_routes: PathBuf,
+      ipv6_routes: PathBuf,
+      sys_class_net: PathBuf,
+   }
+
+   impl FallbackFixture {
+      fn new() -> Self {
+         let directory = TempDir::new();
+         let ipv4_routes = directory.path().join("route");
+         let ipv6_routes = directory.path().join("ipv6_route");
+         let sys_class_net = directory.path().join("net");
+         fs::create_dir_all(sys_class_net.join("eth0")).unwrap();
+         fs::write(sys_class_net.join("eth0/type"), "1\n").unwrap();
+         fs::write(&ipv4_routes, IPV4_ROUTE).unwrap();
+         fs::write(&ipv6_routes, "").unwrap();
+         Self {
+            _directory: directory,
+            ipv4_routes,
+            ipv6_routes,
+            sys_class_net,
+         }
+      }
+
+      fn paths(&self) -> FallbackPaths<'_> {
+         FallbackPaths {
+            ipv4_routes: &self.ipv4_routes,
+            ipv6_routes: &self.ipv6_routes,
+            sys_class_net: &self.sys_class_net,
+         }
+      }
+   }
+
+   fn assert_passive_fallback(status: &ConnectionStatus, connected: bool) {
+      let expected = if connected {
+         ConnectionStatus {
+            connected: true,
+            metered: None,
+            constrained: None,
+            connection_type: ConnectionType::Ethernet,
+         }
+      } else {
+         ConnectionStatus::disconnected()
+      };
+      assert_eq!(*status, expected);
+   }
+
+   fn object_path(path: &str) -> OwnedObjectPath {
+      OwnedObjectPath::try_from(path).unwrap()
+   }
+
+   async fn network_manager(bus: &PrivateBus, state: &Arc<ServiceState>) -> Connection {
+      ConnectionBuilder::address(bus.address.as_str())
+         .name(NETWORK_MANAGER_SERVICE)
+         .serve_at(NETWORK_MANAGER_PATH, Manager(Arc::clone(state)))
+         .serve_at(ACTIVE_PATH, ActiveConnection)
+         .serve_at(DEVICE_PATH, Device(Arc::clone(state)))
+         .serve_at(BAD_DEVICE_PATH, WrongDevice)
+         .build()
+         .await
+         .unwrap()
+   }
+
+   #[test]
+   fn reads_network_manager_status_and_partial_supported_transports() {
+      let bus = PrivateBus::new();
+      let fallback = FallbackFixture::new();
+      let fallback_paths = fallback.paths();
+      zbus::block_on(async {
+         let state = Arc::new(ServiceState::default());
+         let _service = network_manager(&bus, &state).await;
+         let connection = bus.connection().await;
+         let status = connection_status_from_connection(Ok(connection.clone()), &fallback_paths)
+            .await
+            .unwrap();
+         assert_eq!(
+            status,
+            ConnectionStatus {
+               connected: true,
+               metered: Some(false),
+               constrained: Some(false),
+               connection_type: ConnectionType::Wifi,
+            }
+         );
+         assert_eq!(
+            supported_connection_types_from_connection(Ok(connection), &fallback_paths)
+               .await
+               .unwrap(),
+            vec![ConnectionType::Wifi]
+         );
+      });
+   }
+
+   #[test]
+   fn reads_cellular_roaming_and_preserves_unknown_policy_states() {
+      let bus = PrivateBus::new();
+      zbus::block_on(async {
+         let state = Arc::new(ServiceState::default());
+         state
+            .device_type
+            .store(NM_DEVICE_TYPE_MODEM, Ordering::SeqCst);
+         let _manager = network_manager(&bus, &state).await;
+         let connection = bus.connection().await;
+         // A missing ModemManager must leave roaming unknown, even if unmetered.
+         let status = network_manager_connection_status(&connection)
+            .await
+            .unwrap();
+         assert_eq!(status.connection_type, ConnectionType::Cellular);
+         assert_eq!(status.constrained, None);
+         let _modem = ConnectionBuilder::address(bus.address.as_str())
+            .name(MODEM_MANAGER_SERVICE)
+            .serve_at(MODEM_PATH, Modem(Arc::clone(&state)))
+            .build()
+            .await
+            .unwrap();
+         for (registration, expected) in [
+            (MM_MODEM_3GPP_REGISTRATION_STATE_HOME, Some(false)),
+            (MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING, Some(true)),
+            (MM_MODEM_3GPP_REGISTRATION_STATE_UNKNOWN, None),
+            (99, None),
+         ] {
+            state.registration.store(registration, Ordering::SeqCst);
+            assert_eq!(
+               network_manager_connection_status(&connection)
+                  .await
+                  .unwrap()
+                  .constrained,
+               expected
+            );
+         }
+         state.unreadable_metered.store(true, Ordering::SeqCst);
+         let status = network_manager_connection_status(&connection)
+            .await
+            .unwrap();
+         assert_eq!(status.metered, None);
+         assert_eq!(status.constrained, None);
+      });
+   }
+
+   #[test]
+   fn rereads_properties_and_resolves_unknown_connectivity_from_global_state() {
+      let bus = PrivateBus::new();
+      zbus::block_on(async {
+         let state = Arc::new(ServiceState::default());
+         let _manager = network_manager(&bus, &state).await;
+         let connection = bus.connection().await;
+         let proxy = dbus_proxy(
+            &connection,
+            NETWORK_MANAGER_SERVICE,
+            NETWORK_MANAGER_PATH,
+            NETWORK_MANAGER_INTERFACE,
+         )
+         .await
+         .unwrap();
+         for connectivity in [
+            NM_CONNECTIVITY_FULL,
+            NM_CONNECTIVITY_PORTAL,
+            NM_CONNECTIVITY_NONE,
+            NM_CONNECTIVITY_FULL,
+         ] {
+            state.connectivity.store(connectivity, Ordering::SeqCst);
+            // No PropertiesChanged signal is emitted: this must read the bus.
+            assert_eq!(
+               proxy.get_property::<u32>("Connectivity").await.unwrap(),
+               connectivity
+            );
+            let status = network_manager_connection_status(&connection)
+               .await
+               .unwrap();
+            assert_eq!(status.connected, connectivity != NM_CONNECTIVITY_NONE);
+            if status.connected {
+               assert_eq!(
+                  status.constrained,
+                  Some(connectivity == NM_CONNECTIVITY_PORTAL)
+               );
+            }
+         }
+         for metered in [NM_METERED_YES, NM_METERED_NO, NM_METERED_UNKNOWN] {
+            state.metered.store(metered, Ordering::SeqCst);
+            let status = network_manager_connection_status(&connection)
+               .await
+               .unwrap();
+            let expected = metered_status(metered);
+            assert_eq!(status.metered, expected);
+            assert_eq!(status.constrained, expected);
+         }
+         state.metered.store(NM_METERED_NO, Ordering::SeqCst);
+         state
+            .connectivity
+            .store(NM_CONNECTIVITY_UNKNOWN, Ordering::SeqCst);
+         assert!(
+            network_manager_connection_status(&connection)
+               .await
+               .unwrap()
+               .connected
+         );
+         state
+            .global_state
+            .store(NM_STATE_DISCONNECTED, Ordering::SeqCst);
+         assert_eq!(
+            network_manager_connection_status(&connection)
+               .await
+               .unwrap(),
+            ConnectionStatus::disconnected()
+         );
+      });
+   }
+
+   #[rstest]
+   #[case::ipv4(IPV4_ROUTE, "", true)]
+   #[case::ipv6("", IPV6_ROUTE, true)]
+   #[case::offline("", "", false)]
+   fn missing_services_and_connection_failures_use_passive_fallbacks(
+      #[case] ipv4_routes: &str,
+      #[case] ipv6_routes: &str,
+      #[case] connected: bool,
+   ) {
+      let bus = PrivateBus::new();
+      let fallback = FallbackFixture::new();
+      fs::write(&fallback.ipv4_routes, ipv4_routes).unwrap();
+      fs::write(&fallback.ipv6_routes, ipv6_routes).unwrap();
+      let fallback_paths = fallback.paths();
+      zbus::block_on(async {
+         let connection = bus.connection().await;
+         assert!(
+            !service_has_owner(&connection, NETWORK_MANAGER_SERVICE)
+               .await
+               .unwrap()
+         );
+         for connection in [
+            Ok(connection),
+            Err(zbus::Error::Failure("connection unavailable".to_owned())),
+         ] {
+            let status = connection_status_from_connection(connection.clone(), &fallback_paths)
+               .await
+               .unwrap();
+            assert_passive_fallback(&status, connected);
+            assert_eq!(
+               supported_connection_types_from_connection(connection, &fallback_paths)
+                  .await
+                  .map_err(|e| e.to_string()),
+               Ok(vec![ConnectionType::Ethernet])
+            );
+         }
+      });
+   }
+
+   #[test]
+   fn invalid_property_signatures_propagate_to_fallbacks() {
+      let bus = PrivateBus::new();
+      let fallback = FallbackFixture::new();
+      let fallback_paths = fallback.paths();
+      zbus::block_on(async {
+         let _service = ConnectionBuilder::address(bus.address.as_str())
+            .name(NETWORK_MANAGER_SERVICE)
+            .serve_at(NETWORK_MANAGER_PATH, WrongManager)
+            .build()
+            .await
+            .unwrap();
+         let connection = bus.connection().await;
+         assert!(matches!(
+            network_manager_connection_status(&connection).await,
+            Err(zbus::Error::SignatureMismatch(..))
+         ));
+         assert!(
+            network_manager_supported_connection_types(&connection)
+               .await
+               .is_err()
+         );
+         let status = connection_status_from_connection(Ok(connection.clone()), &fallback_paths)
+            .await
+            .unwrap();
+         assert_passive_fallback(&status, true);
+         assert_eq!(
+            supported_connection_types_from_connection(Ok(connection), &fallback_paths)
+               .await
+               .map_err(|e| e.to_string()),
+            Ok(vec![ConnectionType::Ethernet])
+         );
+      });
+   }
+
+   #[test]
+   fn stalled_property_reads_time_out_and_use_the_passive_fallback() {
+      let bus = PrivateBus::new();
+      let fallback = FallbackFixture::new();
+      let fallback_paths = fallback.paths();
+      zbus::block_on(async {
+         let state = Arc::new(ServiceState::default());
+         state.stall.store(true, Ordering::SeqCst);
+         let _service = network_manager(&bus, &state).await;
+         let connection = bus.connection().await;
+         let started = Instant::now();
+         assert!(matches!(
+            network_manager_connection_status(&connection).await,
+            Err(zbus::Error::InputOutput(error)) if error.kind() == std::io::ErrorKind::TimedOut
+         ));
+         assert!(started.elapsed() >= DBUS_METHOD_TIMEOUT);
+         assert!(started.elapsed() < Duration::from_secs(5));
+         let started = Instant::now();
+         let status = connection_status_from_connection(Ok(connection), &fallback_paths)
+            .await
+            .unwrap();
+         assert_passive_fallback(&status, true);
+         assert!(started.elapsed() < Duration::from_secs(5));
+         let connection = bus.connection().await;
+         let started = Instant::now();
+         assert_eq!(
+            supported_connection_types_from_connection(Ok(connection), &fallback_paths)
+               .await
+               .map_err(|e| e.to_string()),
+            Ok(vec![ConnectionType::Ethernet])
+         );
+         assert!(started.elapsed() >= DBUS_METHOD_TIMEOUT);
+         assert!(started.elapsed() < Duration::from_secs(5));
+      });
+   }
+
+   #[test]
+   fn repeated_and_concurrent_queries_work_on_independent_calling_threads() {
+      let bus = PrivateBus::new();
+      let fallback = FallbackFixture::new();
+      let fallback_paths = fallback.paths();
+      let state = Arc::new(ServiceState::default());
+      let _service = zbus::block_on(network_manager(&bus, &state));
+      std::thread::scope(|scope| {
+         let handles: Vec<_> = (0..4)
+            .map(|_| {
+               scope.spawn(|| {
+                  for _ in 0..3 {
+                     zbus::block_on(async {
+                        let connection = bus.connection().await;
+                        let status = connection_status_from_connection(
+                           Ok(connection.clone()),
+                           &fallback_paths,
+                        )
+                        .await
+                        .unwrap();
+                        assert!(status.connected);
+                        assert_eq!(status.connection_type, ConnectionType::Wifi);
+                        assert_eq!(
+                           supported_connection_types_from_connection(
+                              Ok(connection),
+                              &fallback_paths
+                           )
+                           .await
+                           .unwrap(),
+                           vec![ConnectionType::Wifi]
+                        );
+                     });
+                  }
+               })
+            })
+            .collect();
+         for handle in handles {
+            handle.join().unwrap();
+         }
+      });
+   }
+
+   #[test]
+   fn removes_private_bus_socket_directory_on_drop() {
+      let directory = {
+         let bus = PrivateBus::new();
+         let directory = bus.directory.path().to_owned();
+         assert!(
+            fs::read_dir(&directory).unwrap().any(|entry| entry
+               .unwrap()
+               .file_type()
+               .unwrap()
+               .is_socket())
+         );
+         directory
+      };
+      assert!(!directory.exists());
    }
 }

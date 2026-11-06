@@ -15,18 +15,6 @@ reason = "Tauri's GTK stack uses proc-macro-error through glib-macros and gtk3-m
 id = "RUSTSEC-2024-0429"
 reason = "Tauri's GTK 3 stack requires glib 0.18; the fix requires glib 0.20 and cannot be selected compatibly. This plugin does not use VariantStrIter. Remove when Tauri migrates its GTK stack."
 
-[[advisories.ignore]]
-id = "RUSTSEC-2026-0370"
-reason = "crates/connectivity depends on zbus 5 directly, and zbus 5 requires zvariant. Remove after this repository's zbus 6 migration: https://github.com/silvermine/tauri-plugin-connectivity/issues/40."
-
-[[advisories.ignore]]
-id = "RUSTSEC-2026-0371"
-reason = "crates/connectivity depends on zbus 5 directly, and zbus 5 requires zbus_names. Remove after this repository's zbus 6 migration: https://github.com/silvermine/tauri-plugin-connectivity/issues/40."
-
-[[advisories.ignore]]
-id = "RUSTSEC-2026-0372"
-reason = "crates/connectivity depends on zbus 5 directly, and zbus 5 requires zvariant_derive. Remove after this repository's zbus 6 migration: https://github.com/silvermine/tauri-plugin-connectivity/issues/40."
-
 [licenses]
 allow = [
    "Apache-2.0",
