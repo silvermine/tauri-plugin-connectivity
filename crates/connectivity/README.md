@@ -48,6 +48,12 @@ network policy should require `Some(false)` as shown above.
 Android and iOS detection remain part of the Tauri plugin's native mobile
 bridge and are not implemented by this crate.
 
+## Tests
+
+Run `cargo test -p connectivity --lib`. On Linux, the D-Bus regression tests
+require `dbus-daemon` and start private buses with mock NetworkManager and
+ModemManager services. They do not use or modify the system bus.
+
 ## License
 
 MIT
