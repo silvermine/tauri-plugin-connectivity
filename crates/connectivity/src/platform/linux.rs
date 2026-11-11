@@ -998,6 +998,14 @@ mod tests {
    static TEMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
    #[test]
+   fn public_linux_apis_work_without_an_async_runtime() {
+      crate::connection_status()
+         .expect("public status query should succeed through D-Bus or passive fallback");
+      crate::supported_connection_types()
+         .expect("public transport query should succeed through D-Bus or sysfs fallback");
+   }
+
+   #[test]
    fn limits_each_dbus_method_call_to_500_milliseconds() {
       assert_eq!(DBUS_METHOD_TIMEOUT, Duration::from_millis(500));
    }
